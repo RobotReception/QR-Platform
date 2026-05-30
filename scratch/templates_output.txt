@@ -1,0 +1,130 @@
+﻿================================================================================
+DESIGNED TEMPLATES IN DATABASE
+================================================================================
+
+  [vip] ╪º╪«╪¬╪¿╪º╪▒ ╪º┘ä╪º╪│┘à
+  Canvas: 1240 x 1754
+  ID: eb830f2b-4001-4b1a-82ac-0aebae967d02
+  Elements (3):
+    [0] type=qr_code | data_key=invite.barcode_payload | label=╪¿╪º╪▒┘â┘ê╪» 1 | visible=True
+        pos=(0.160, 0.217) size=(0.157, 0.111) font=24.00 slot=None
+    [1] type=dynamic_text | data_key=╪º╪│┘à ╪º┘ä╪╢┘è┘ü | label=┘å╪╡ ╪»┘è┘å╪º┘à┘è┘â┘è 1 | visible=True
+        pos=(0.083, 0.333) size=(0.196, 0.050) font=13.00 slot=0
+    [2] type=custom_text | data_key=NULL | label=┘å╪╡ ╪½╪º╪¿╪¬ 1 | visible=True
+        pos=(0.629, 0.259) size=(0.177, 0.051) font=9.00 slot=None
+        static_content=┘å╪╡ ╪¬╪¼╪▒┘è╪¿┘è
+------------------------------------------------------------
+
+  [normal] ┘à╪ñ╪¬┘à╪▒ ╪º┘ä╪¬╪¡┘ê┘ä ╪º┘ä╪▒┘é┘à┘è - ╪╣╪º╪»┘è
+  Canvas: 1240 x 1754
+  ID: 8957476d-931e-45db-a4ae-95973ad0c10c
+  Elements (16):
+    [0] type=qr_code | data_key=invite.barcode_payload | label=╪¿╪º╪▒┘â┘ê╪» QR | visible=True
+        pos=(0.216, 0.222) size=(0.132, 0.093) font=24.00 slot=None
+    [1] type=qr_code | data_key=invite.barcode_payload | label=╪¿╪º╪▒┘â┘ê╪» QR | visible=True
+        pos=(0.649, 0.216) size=(0.132, 0.093) font=24.00 slot=None
+    [2] type=qr_code | data_key=invite.barcode_payload | label=╪¿╪º╪▒┘â┘ê╪» QR | visible=True
+        pos=(0.215, 0.720) size=(0.132, 0.093) font=24.00 slot=None
+    [3] type=qr_code | data_key=invite.barcode_payload | label=╪¿╪º╪▒┘â┘ê╪» QR | visible=True
+        pos=(0.651, 0.721) size=(0.132, 0.093) font=24.00 slot=None
+    [4] type=dynamic_text | data_key=╪º╪│┘à ╪º┘ä╪╢┘è┘ü | label=┘å╪╡ ╪»┘è┘å╪º┘à┘è┘â┘è 1 | visible=True
+        pos=(0.181, 0.336) size=(0.127, 0.053) font=10.00 slot=0
+    [5] type=dynamic_text | data_key=╪º╪│┘à ╪º┘ä╪╢┘è┘ü | label=┘å╪╡ ╪»┘è┘å╪º┘à┘è┘â┘è 1 | visible=True
+        pos=(0.624, 0.333) size=(0.127, 0.053) font=10.00 slot=0
+    [6] type=dynamic_text | data_key=╪º╪│┘à ╪º┘ä╪╢┘è┘ü | label=┘å╪╡ ╪»┘è┘å╪º┘à┘è┘â┘è 1 | visible=True
+        pos=(0.186, 0.835) size=(0.127, 0.053) font=10.00 slot=0
+    [7] type=dynamic_text | data_key=╪º╪│┘à ╪º┘ä╪╢┘è┘ü | label=┘å╪╡ ╪»┘è┘å╪º┘à┘è┘â┘è 1 | visible=True
+        pos=(0.627, 0.836) size=(0.127, 0.053) font=10.00 slot=0
+    [8] type=dynamic_text | data_key=╪º┘ä┘à╪│┘à┘ë ╪º┘ä┘ê╪╕┘è┘ü┘è | label=┘å╪╡ ╪»┘è┘å╪º┘à┘è┘â┘è 5 | visible=True
+        pos=(0.682, 0.203) size=(0.103, 0.050) font=8.00 slot=3
+    [9] type=dynamic_text | data_key=╪º┘ä┘à╪│┘à┘ë ╪º┘ä┘ê╪╕┘è┘ü┘è | label=┘å╪╡ ╪»┘è┘å╪º┘à┘è┘â┘è 5 | visible=True
+        pos=(0.255, 0.206) size=(0.103, 0.050) font=8.00 slot=3
+    [10] type=dynamic_text | data_key=╪º┘ä┘à╪│┘à┘ë ╪º┘ä┘ê╪╕┘è┘ü┘è | label=┘å╪╡ ╪»┘è┘å╪º┘à┘è┘â┘è 5 | visible=True
+        pos=(0.689, 0.704) size=(0.103, 0.050) font=8.00 slot=3
+    [11] type=dynamic_text | data_key=╪º┘ä┘à╪│┘à┘ë ╪º┘ä┘ê╪╕┘è┘ü┘è | label=┘å╪╡ ╪»┘è┘å╪º┘à┘è┘â┘è 5 | visible=True
+        pos=(0.251, 0.704) size=(0.103, 0.050) font=8.00 slot=3
+    [12] type=dynamic_text | data_key=╪º┘ä╪¼┘ç╪⌐ | label=┘å╪╡ ╪»┘è┘å╪º┘à┘è┘â┘è 9 | visible=True
+        pos=(0.357, 0.050) size=(0.128, 0.108) font=16.00 slot=3
+    [13] type=dynamic_text | data_key=╪º┘ä╪¼┘ç╪⌐ | label=┘å╪╡ ╪»┘è┘å╪º┘à┘è┘â┘è 9 | visible=True
+        pos=(0.795, 0.050) size=(0.128, 0.108) font=16.00 slot=3
+    [14] type=dynamic_text | data_key=╪º┘ä╪¼┘ç╪⌐ | label=┘å╪╡ ╪»┘è┘å╪º┘à┘è┘â┘è 9 | visible=True
+        pos=(0.795, 0.540) size=(0.128, 0.108) font=16.00 slot=3
+    [15] type=dynamic_text | data_key=╪º┘ä╪¼┘ç╪⌐ | label=┘å╪╡ ╪»┘è┘å╪º┘à┘è┘â┘è 9 | visible=True
+        pos=(0.358, 0.543) size=(0.128, 0.108) font=16.00 slot=3
+------------------------------------------------------------
+
+  [normal] ┘à╪ñ╪¬┘à╪▒ ╪º┘ä╪¬╪¡┘ê┘ä ╪º┘ä╪▒┘é┘à┘è - ╪╣╪º╪»┘è
+  Canvas: 1240 x 1754
+  ID: 1199d0a6-1b2b-42fe-81c0-cc25afb2e15c
+  *** NO ELEMENTS! ***
+------------------------------------------------------------
+
+  [normal] ┘à╪ñ╪¬┘à╪▒ ╪º┘ä╪¬╪¡┘ê┘ä ╪º┘ä╪▒┘é┘à┘è - ╪╣╪º╪»┘è
+  Canvas: 1240 x 1754
+  ID: f67a5a1e-cc8d-41e5-b510-27193792a05c
+  *** NO ELEMENTS! ***
+------------------------------------------------------------
+
+  [normal] ╪º┘ä╪¬╪╡┘à┘è┘à ╪º┘ä╪¼╪»┘è╪»
+  Canvas: 1240 x 1754
+  ID: c9b1efdc-c2e8-4311-81ad-22409051e2ec
+  Elements (4):
+    [0] type=qr_code | data_key=invite.barcode_payload | label=╪¿╪º╪▒┘â┘ê╪» QR | visible=True
+        pos=(0.162, 0.217) size=(0.158, 0.111) font=24.00 slot=None
+    [1] type=qr_code | data_key=invite.barcode_payload | label=╪¿╪º╪▒┘â┘ê╪» QR | visible=True
+        pos=(0.675, 0.217) size=(0.158, 0.111) font=24.00 slot=None
+    [2] type=qr_code | data_key=invite.barcode_payload | label=╪¿╪º╪▒┘â┘ê╪» QR | visible=True
+        pos=(0.162, 0.719) size=(0.158, 0.111) font=24.00 slot=None
+    [3] type=qr_code | data_key=invite.barcode_payload | label=╪¿╪º╪▒┘â┘ê╪» QR | visible=True
+        pos=(0.669, 0.714) size=(0.158, 0.111) font=24.00 slot=None
+------------------------------------------------------------
+
+  [normal] ┘à╪ñ╪¬┘à╪▒ ╪º┘ä╪¬╪¡┘ê┘ä ╪º┘ä╪▒┘é┘à┘è - 12333
+  Canvas: 1240 x 1754
+  ID: 81594298-1d2b-48a4-8fcf-7a54635e5d5d
+  Elements (2):
+    [0] type=qr_code | data_key=invite.barcode_payload | label=╪¿╪º╪▒┘â┘ê╪» QR | visible=True
+        pos=(0.150, 0.211) size=(0.165, 0.116) font=24.00 slot=None
+    [1] type=qr_code | data_key=invite.barcode_payload | label=╪¿╪º╪▒┘â┘ê╪» QR | visible=True
+        pos=(0.678, 0.717) size=(0.165, 0.116) font=24.00 slot=None
+------------------------------------------------------------
+
+  [normal] ┘à╪ñ╪¬┘à╪▒ ╪º┘ä╪¬╪¡┘ê┘ä ╪º┘ä╪▒┘é┘à┘è - 1111
+  Canvas: 1240 x 1754
+  ID: 8fe24558-fb2c-462e-850e-ff1bc0b65167
+  Elements (1):
+    [0] type=qr_code | data_key=invite.barcode_payload | label=╪¿╪º╪▒┘â┘ê╪» QR | visible=True
+        pos=(0.683, 0.220) size=(0.148, 0.105) font=24.00 slot=None
+------------------------------------------------------------
+
+  [normal] ┘à╪ñ╪¬┘à╪▒ ╪º┘ä╪¬╪¡┘ê┘ä ╪º┘ä╪▒┘é┘à┘è - ╪º╪«╪¬╪¿╪º╪▒ 22
+  Canvas: 720 x 1012
+  ID: 4d2e505d-6f45-4f2e-bf5b-df856ae62963
+  Elements (4):
+    [0] type=qr_code | data_key=invite.barcode_payload | label=╪¿╪º╪▒┘â┘ê╪» QR | visible=True
+        pos=(0.271, 0.214) size=(0.108, 0.077) font=24.00 slot=None
+    [1] type=qr_code | data_key=invite.barcode_payload | label=╪¿╪º╪▒┘â┘ê╪» QR | visible=True
+        pos=(0.619, 0.220) size=(0.108, 0.077) font=24.00 slot=None
+    [2] type=qr_code | data_key=invite.barcode_payload | label=╪¿╪º╪▒┘â┘ê╪» QR | visible=True
+        pos=(0.618, 0.718) size=(0.108, 0.077) font=24.00 slot=None
+    [3] type=qr_code | data_key=invite.barcode_payload | label=╪¿╪º╪▒┘â┘ê╪» QR | visible=True
+        pos=(0.274, 0.718) size=(0.108, 0.077) font=24.00 slot=None
+------------------------------------------------------------
+
+  [normal] ┘à╪ñ╪¬┘à╪▒ ╪º┘ä╪¬╪¡┘ê┘ä ╪º┘ä╪▒┘é┘à┘è - 22
+  Canvas: 1240 x 1754
+  ID: 7ccb6844-6924-4629-8596-cbcd37437ab2
+  Elements (2):
+    [0] type=qr_code | data_key=invite.barcode_payload | label=╪¿╪º╪▒┘â┘ê╪» QR | visible=True
+        pos=(0.274, 0.216) size=(0.108, 0.077) font=24.00 slot=None
+    [1] type=qr_code | data_key=invite.barcode_payload | label=╪¿╪º╪▒┘â┘ê╪» QR | visible=True
+        pos=(0.614, 0.206) size=(0.108, 0.077) font=24.00 slot=None
+------------------------------------------------------------
+
+  [vip] ┘à╪ñ╪¬┘à╪▒ ╪º┘ä╪¬╪¡┘ê┘ä ╪º┘ä╪▒┘é┘à┘è - VIP 2
+  Canvas: 1191 x 1684
+  ID: a4ce14e7-07d9-4b1b-85a2-fdb301dc9879
+  Elements (1):
+    [0] type=qr_code | data_key=invite.barcode_payload | label=╪¿╪º╪▒┘â┘ê╪» 1 | visible=True
+        pos=(0.177, 0.240) size=(0.178, 0.126) font=24.00 slot=None
+------------------------------------------------------------

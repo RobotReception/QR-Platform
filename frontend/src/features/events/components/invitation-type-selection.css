@@ -1,0 +1,197 @@
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+/* Invitation Type Selection - أنماط اختيار نوع الدعوات */
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+@import './smooth-animations.css';
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+/* Invitation Types Grid */
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+.invitation-types-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 24px;
+  margin-bottom: 32px;
+  animation: fadeInUp 0.5s ease 0.3s both;
+}
+
+.invitation-type-card {
+  position: relative;
+  border: 2px solid #e2e8f0;
+  border-radius: 16px;
+  padding: 32px 24px;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  background: white;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  animation: fadeInUp 0.5s ease;
+  animation-fill-mode: both;
+}
+
+.invitation-type-card:nth-child(1) { animation-delay: 0.3s; }
+.invitation-type-card:nth-child(2) { animation-delay: 0.4s; }
+
+.invitation-type-card:hover {
+  border-color: #4299e1;
+  box-shadow: 0 12px 32px rgba(66, 153, 225, 0.2);
+  transform: translateY(-8px);
+}
+
+.invitation-type-card.selected {
+  border-color: #4299e1;
+  background: linear-gradient(135deg, #ebf8ff 0%, #e6fffa 100%);
+  box-shadow: 0 12px 32px rgba(66, 153, 225, 0.3),
+              inset 0 0 0 1px rgba(66, 153, 225, 0.1);
+  animation: scaleIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* Type Icon */
+.type-icon {
+  width: 96px;
+  height: 96px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  margin-bottom: 16px;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  animation: float 3s ease-in-out infinite;
+}
+
+.invitation-type-card:hover .type-icon {
+  transform: scale(1.1);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+}
+
+/* Type Label */
+.type-label {
+  font-size: 20px;
+  font-weight: 700;
+  color: #1a202c;
+  margin: 0 0 8px 0;
+  transition: color 0.3s ease;
+}
+
+.invitation-type-card:hover .type-label {
+  color: #4299e1;
+}
+
+/* Type Description */
+.type-description {
+  font-size: 14px;
+  color: #718096;
+  margin: 0;
+  transition: color 0.3s ease;
+  line-height: 1.5;
+}
+
+.invitation-type-card:hover .type-description {
+  color: #667eea;
+}
+
+/* Selection Indicator */
+.invitation-type-card .selection-indicator {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  color: #4299e1;
+  background: white;
+  border-radius: 50%;
+  padding: 4px;
+  animation: scaleIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow: 0 2px 8px rgba(66, 153, 225, 0.3);
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+/* Invitation Type Info in Preview */
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+.invitation-type-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: #f7fafc;
+  border-radius: 8px;
+  border-left: 3px solid #4299e1;
+}
+
+.invitation-type-info strong {
+  color: #1a202c;
+  font-weight: 600;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+/* Type Badge (for VIP/Normal) */
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+.type-badge {
+  display: inline-block;
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  transition: all 0.3s ease;
+}
+
+.type-badge.vip {
+  background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+  color: #92400e;
+  border: 1px solid #fcd34d;
+}
+
+.type-badge.normal {
+  background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+  color: #1e40af;
+  border: 1px solid #93c5fd;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+/* Responsive */
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+@media (max-width: 768px) {
+  .invitation-types-grid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .type-icon {
+    width: 72px;
+    height: 72px;
+  }
+
+  .type-label {
+    font-size: 18px;
+  }
+
+  .type-description {
+    font-size: 13px;
+  }
+
+  .invitation-type-info {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+@media (max-width: 480px) {
+  .invitation-type-card {
+    padding: 24px 16px;
+  }
+
+  .type-icon {
+    width: 56px;
+    height: 56px;
+  }
+
+  .type-label {
+    font-size: 16px;
+  }
+}

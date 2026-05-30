@@ -1,0 +1,655 @@
+"""Digital Invitations API: create (quick/designed/bulk), send, revoke, RSVP."""
+from fastapi import APIRouter, Depends, HTTPException, Request, Query
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+from uuid import UUID
+from typing import Optional
+import json
+import logging
+
+from app.auth import get_current_user, get_tenant_id_from_header, CurrentUser
+from app.database import get_db
+from app.models.invitation import (
+    InvitationCreate, InvitationRead, InvitationUpdate,
+    QuickInviteCreate, BulkInviteFromGuests, InvitationSend,
+    RsvpRequest,
+)
+from app.services.permission_service import require_permission
+from app.services.audit_service import log_audit
+from app.services import barcode_service, storage_service
+from app.config import get_settings
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/invitations", tags=["Invitations"])
+settings = get_settings()
+
+
+# ══════════════════════════════════════════════
+# LIST / GET
+# ══════════════════════════════════════════════
+
+@router.get("", response_model=list[InvitationRead])
+async def list_invitations(
+    request: Request,
+    event_id: Optional[UUID] = None,
+    ticket_class: Optional[str] = None,
+    status_filter: Optional[str] = Query(None, alias="status"),
+    limit: int = Query(100, le=500),
+    offset: int = 0,
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tenant_id = get_tenant_id_from_header(request)
+    await require_permission(db, tenant_id, user.id, "invitations.view")
+
+    query = """
+        SELECT * FROM invitations
+        WHERE tenant_id = :tid
+          AND (metadata IS NULL OR metadata->>'generation_deleted' IS DISTINCT FROM 'true')
+    """
+    params: dict = {"tid": str(tenant_id)}
+
+    if event_id:
+        query += " AND event_id = :eid"
+        params["eid"] = str(event_id)
+    if ticket_class:
+        query += " AND ticket_class = :tc"
+        params["tc"] = ticket_class
+    if status_filter:
+        query += " AND status = :st"
+        params["st"] = status_filter
+
+    query += " ORDER BY created_at DESC LIMIT :lim OFFSET :off"
+    params["lim"] = limit
+    params["off"] = offset
+
+    result = await db.execute(text(query), params)
+    return [InvitationRead(**dict(r)) for r in result.mappings().all()]
+
+
+@router.get("/{invitation_id}", response_model=InvitationRead)
+async def get_invitation(
+    invitation_id: UUID, request: Request,
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tenant_id = get_tenant_id_from_header(request)
+    await require_permission(db, tenant_id, user.id, "invitations.view")
+
+    result = await db.execute(
+        text("SELECT * FROM invitations WHERE id = :id AND tenant_id = :tid"),
+        {"id": str(invitation_id), "tid": str(tenant_id)},
+    )
+    row = result.mappings().first()
+    if not row:
+        raise HTTPException(404, "الدعوة غير موجودة")
+    return InvitationRead(**dict(row))
+
+
+# ══════════════════════════════════════════════
+# CREATE SINGLE INVITATION
+# ══════════════════════════════════════════════
+
+@router.post("", response_model=InvitationRead, status_code=201)
+async def create_invitation(
+    body: InvitationCreate, request: Request,
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tenant_id = get_tenant_id_from_header(request)
+    await require_permission(db, tenant_id, user.id, "invitations.create")
+
+    # Check quota
+    await _check_quota(db, str(tenant_id), str(body.event_id), body.ticket_class)
+
+    result = await db.execute(
+        text("""
+            INSERT INTO invitations (
+                tenant_id, event_id, template_id, guest_id, ticket_class,
+                guest_name, guest_name_ar, guest_phone, guest_whatsapp, guest_email,
+                seat_number, table_number, gate_id, hall, zone,
+                notes, metadata, created_by
+            ) VALUES (
+                :tid, :eid, :tmpl, :gid, CAST(:tc AS ticket_class),
+                :gname, :gname_ar, :gphone, :gwhatsapp, :gemail,
+                :seat, :tbl, :gate, :hall, :zone,
+                :notes, CAST(:meta AS jsonb), :uid
+            )
+            RETURNING *
+        """),
+        {
+            "tid": str(tenant_id), "eid": str(body.event_id),
+            "tmpl": str(body.template_id) if body.template_id else None,
+            "gid": str(body.guest_id) if body.guest_id else None,
+            "tc": body.ticket_class,
+            "gname": body.guest_name, "gname_ar": body.guest_name_ar,
+            "gphone": body.guest_phone, "gwhatsapp": body.guest_whatsapp, "gemail": body.guest_email,
+            "seat": body.seat_number, "tbl": body.table_number,
+            "gate": str(body.gate_id) if body.gate_id else None,
+            "hall": body.hall, "zone": body.zone,
+            "notes": body.notes,
+            "meta": json.dumps(body.metadata or {}, default=str),
+            "uid": str(user.id),
+        },
+    )
+    row = result.mappings().first()
+
+    # Generate barcode inline
+    await _generate_barcode_for_row(db, tenant_id, body.event_id, dict(row))
+
+    await db.commit()
+    # Re-fetch to get updated barcode URLs
+    updated = await db.execute(
+        text("SELECT * FROM invitations WHERE id = :id"),
+        {"id": str(row["id"])},
+    )
+    return InvitationRead(**dict(updated.mappings().first()))
+
+
+# ══════════════════════════════════════════════
+# QUICK INVITES (بدون تصميم — بالعدد أو بالأسماء)
+# ══════════════════════════════════════════════
+
+@router.post("/quick", status_code=201)
+async def create_quick_invites(
+    body: QuickInviteCreate, request: Request,
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create quick invitations by count or by names list.
+    
+    Optimized: single quota check + batch INSERT for maximum speed.
+    """
+    tenant_id = get_tenant_id_from_header(request)
+    await require_permission(db, tenant_id, user.id, "invitations.create")
+
+    try:
+        if not body.count and not body.names:
+            raise HTTPException(400, "يجب تحديد العدد أو قائمة الأسماء")
+
+        names = body.names or [None] * (body.count or 0)
+        total = len(names)
+
+        # Validate event exists
+        event_result = await db.execute(
+            text("SELECT id FROM events WHERE id = :eid AND tenant_id = :tid"),
+            {"eid": str(body.event_id), "tid": str(tenant_id)},
+        )
+        if not event_result.first():
+            raise HTTPException(404, "الحدث غير موجود")
+
+        # Single quota check for the entire batch
+        quota_result = await db.execute(
+            text("""
+                SELECT
+                    CASE WHEN CAST(:tc AS ticket_class) = 'vip'::ticket_class
+                         THEN e.vip_quota ELSE e.normal_quota END AS quota,
+                    COUNT(i.id) FILTER (
+                        WHERE i.ticket_class = CAST(:tc AS ticket_class)
+                          AND i.status NOT IN ('revoked','expired')
+                    ) AS used
+                FROM events e
+                LEFT JOIN invitations i ON i.event_id = e.id
+                WHERE e.id = :eid AND e.tenant_id = :tid
+                GROUP BY e.id
+            """),
+            {"eid": str(body.event_id), "tid": str(tenant_id), "tc": body.ticket_class},
+        )
+        quota_row = quota_result.mappings().first()
+        if not quota_row:
+            raise HTTPException(404, "الحدث غير موجود")
+        if quota_row["quota"] > 0 and (quota_row["used"] + total) > quota_row["quota"]:
+            raise HTTPException(
+                400,
+                f"تم الوصول للحد الأقصى لدعوات {body.ticket_class} "
+                f"({quota_row['quota']}). المستخدم: {quota_row['used']}, المطلوب: {total}"
+            )
+
+        # Batch INSERT — single query for all invitations
+        values_parts = []
+        params: dict = {
+            "tid": str(tenant_id),
+            "eid": str(body.event_id),
+            "tmpl": str(body.template_id) if body.template_id else None,
+            "tc": body.ticket_class,
+            "gate": str(body.gate_id) if body.gate_id else None,
+            "uid": str(user.id),
+        }
+        for idx, name in enumerate(names):
+            key = f"gn_{idx}"
+            params[key] = name
+            values_parts.append(
+                f"(:tid, :eid, :tmpl, CAST(:tc AS ticket_class), :{key}, :gate, :uid)"
+            )
+
+        insert_sql = f"""
+            INSERT INTO invitations (
+                tenant_id, event_id, template_id, ticket_class,
+                guest_name, gate_id, created_by
+            ) VALUES {', '.join(values_parts)}
+            RETURNING
+                id, token, guest_name,
+                ticket_class::text AS ticket_class,
+                status::text AS status
+        """
+
+        result = await db.execute(text(insert_sql), params)
+        created = [
+            {
+                "id": str(row["id"]),
+                "token": row["token"],
+                "guest_name": row["guest_name"],
+                "ticket_class": row["ticket_class"],
+                "status": row["status"],
+            }
+            for row in result.mappings().all()
+        ]
+
+        await log_audit(
+            db,
+            tenant_id=tenant_id,
+            actor_user_id=user.id,
+            action="invitations.quick_create",
+            resource_type="invitation",
+            metadata={
+                "count": len(created),
+                "event_id": str(body.event_id),
+                "ticket_class": body.ticket_class,
+            },
+            ip_address=request.client.host if request.client else None,
+        )
+        await db.commit()
+        return {"created": len(created), "invitations": created}
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as exc:
+        await db.rollback()
+        logger.exception("Quick invite creation failed")
+        raise HTTPException(500, detail=f"Quick invite creation failed: {exc}")
+
+
+# ══════════════════════════════════════════════
+# BULK FROM GUESTS (إنشاء دعوات من دفتر الضيوف)
+# ══════════════════════════════════════════════
+
+@router.post("/bulk-from-guests", status_code=201)
+async def create_bulk_from_guests(
+    body: BulkInviteFromGuests, request: Request,
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tenant_id = get_tenant_id_from_header(request)
+    await require_permission(db, tenant_id, user.id, "invitations.create")
+
+    created = 0
+    for gid in body.guest_ids:
+        await _check_quota(db, str(tenant_id), str(body.event_id), body.ticket_class)
+
+        # Get guest info
+        g = await db.execute(
+            text("SELECT full_name, full_name_ar, phone, email FROM guests WHERE id = :id AND tenant_id = :tid"),
+            {"id": str(gid), "tid": str(tenant_id)},
+        )
+        guest = g.mappings().first()
+        if not guest:
+            continue
+
+        await db.execute(
+            text("""
+                INSERT INTO invitations (
+                    tenant_id, event_id, template_id, guest_id, ticket_class,
+                    guest_name, guest_name_ar, guest_phone, guest_whatsapp, guest_email,
+                    gate_id, created_by
+                ) VALUES (
+                    :tid, :eid, :tmpl, :gid, CAST(:tc AS ticket_class),
+                    :gname, :gname_ar, :gphone, :gwhatsapp, :gemail,
+                    :gate, :uid
+                )
+            """),
+            {
+                "tid": str(tenant_id), "eid": str(body.event_id),
+                "tmpl": str(body.template_id) if body.template_id else None,
+                "gid": str(gid), "tc": body.ticket_class,
+                "gname": guest["full_name"], "gname_ar": guest.get("full_name_ar"),
+                "gphone": guest.get("phone"), "gwhatsapp": guest.get("phone"), "gemail": guest.get("email"),
+                "gate": str(body.gate_id) if body.gate_id else None,
+                "uid": str(user.id),
+            },
+        )
+        created += 1
+
+    await log_audit(db, tenant_id=tenant_id, actor_user_id=user.id,
+                    action="invitations.bulk_create", resource_type="invitation",
+                    metadata={"count": created, "event_id": str(body.event_id)},
+                    ip_address=request.client.host if request.client else None)
+    await db.commit()
+    return {"created": created}
+
+
+# ══════════════════════════════════════════════
+# UPDATE / REVOKE
+# ══════════════════════════════════════════════
+
+@router.patch("/{invitation_id}", response_model=InvitationRead)
+async def update_invitation(
+    invitation_id: UUID, body: InvitationUpdate, request: Request,
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tenant_id = get_tenant_id_from_header(request)
+    await require_permission(db, tenant_id, user.id, "invitations.create")
+
+    updates = body.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(400, "لا توجد حقول للتعديل")
+
+    if "gate_id" in updates and updates["gate_id"]:
+        updates["gate_id"] = str(updates["gate_id"])
+
+    set_clauses = ", ".join(f"{k} = :{k}" for k in updates)
+    updates["id"] = str(invitation_id)
+    updates["tid"] = str(tenant_id)
+
+    result = await db.execute(
+        text(f"UPDATE invitations SET {set_clauses}, updated_at = now() WHERE id = :id AND tenant_id = :tid RETURNING *"),
+        updates,
+    )
+    row = result.mappings().first()
+    if not row:
+        raise HTTPException(404, "الدعوة غير موجودة")
+    await db.commit()
+    return InvitationRead(**dict(row))
+
+
+@router.post("/{invitation_id}/revoke")
+async def revoke_invitation(
+    invitation_id: UUID, request: Request,
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tenant_id = get_tenant_id_from_header(request)
+    await require_permission(db, tenant_id, user.id, "invitations.revoke")
+
+    result = await db.execute(
+        text("""
+            UPDATE invitations SET status = 'revoked', updated_at = now()
+            WHERE id = :id AND tenant_id = :tid AND status NOT IN ('revoked', 'expired')
+            RETURNING id
+        """),
+        {"id": str(invitation_id), "tid": str(tenant_id)},
+    )
+    if not result.first():
+        raise HTTPException(400, "الدعوة غير موجودة أو ملغاة مسبقاً")
+
+    await log_audit(db, tenant_id=tenant_id, actor_user_id=user.id,
+                    action="invitation.revoke", resource_type="invitation",
+                    resource_id=str(invitation_id),
+                    ip_address=request.client.host if request.client else None)
+    await db.commit()
+    return {"message": "تم إلغاء الدعوة"}
+
+
+@router.post("/bulk-revoke")
+async def bulk_revoke(
+    request: Request,
+    invitation_ids: list[UUID] = [],
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tenant_id = get_tenant_id_from_header(request)
+    await require_permission(db, tenant_id, user.id, "invitations.revoke")
+
+    ids_str = [str(i) for i in invitation_ids]
+    result = await db.execute(
+        text("""
+            UPDATE invitations SET status = 'revoked', updated_at = now()
+            WHERE tenant_id = :tid AND id = ANY(:ids::uuid[]) AND status NOT IN ('revoked', 'expired')
+        """),
+        {"tid": str(tenant_id), "ids": ids_str},
+    )
+    await db.commit()
+    return {"revoked": result.rowcount}
+
+
+# ══════════════════════════════════════════════
+# SEND INVITATIONS
+# ══════════════════════════════════════════════
+
+@router.post("/send")
+async def send_invitations(
+    body: InvitationSend, request: Request,
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tenant_id = get_tenant_id_from_header(request)
+    await require_permission(db, tenant_id, user.id, "invitations.send")
+
+    sent = 0
+    for inv_id in body.invitation_ids:
+        # Get invitation
+        inv = await db.execute(
+            text("SELECT id, guest_phone, guest_whatsapp, guest_email, token, status FROM invitations WHERE id = :id AND tenant_id = :tid"),
+            {"id": str(inv_id), "tid": str(tenant_id)},
+        )
+        row = inv.mappings().first()
+        if not row or row["status"] in ("revoked", "expired"):
+            continue
+
+        recipient = row.get("guest_email") or row.get("guest_whatsapp") or row.get("guest_phone") or row["token"]
+
+        # Create delivery record
+        await db.execute(
+            text("""
+                INSERT INTO invitation_deliveries (invitation_id, channel, recipient, status, sent_at)
+                VALUES (:iid, :ch, :rcpt, 'sent', now())
+            """),
+            {"iid": str(inv_id), "ch": body.channel, "rcpt": recipient},
+        )
+
+        # Update invitation status
+        await db.execute(
+            text("UPDATE invitations SET status = 'sent', updated_at = now() WHERE id = :id AND status = 'created'"),
+            {"id": str(inv_id)},
+        )
+        sent += 1
+
+    await log_audit(db, tenant_id=tenant_id, actor_user_id=user.id,
+                    action="invitations.send", resource_type="invitation",
+                    metadata={"count": sent, "channel": body.channel},
+                    ip_address=request.client.host if request.client else None)
+    await db.commit()
+    return {"sent": sent}
+
+
+# ══════════════════════════════════════════════
+# PUBLIC: VIEW INVITATION (by token, no auth)
+# ══════════════════════════════════════════════
+
+@router.get("/view/{token}")
+async def view_invitation_public(
+    token: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Public endpoint: view invitation by token (marks as viewed).
+    Returns ONLY guest-safe fields — no tenant_id, internal IDs, or admin data."""
+    result = await db.execute(
+        text("""
+            SELECT
+                i.id, i.token, i.status, i.ticket_class,
+                i.guest_name, i.guest_name_ar,
+                i.seat_number, i.table_number, i.hall, i.zone,
+                i.barcode_png_url, i.render_image_url, i.card_image_url,
+                i.qr_data, i.rsvp_status, i.plus_one_count,
+                e.title AS event_title, e.title_ar AS event_title_ar,
+                e.start_date, e.end_date,
+                e.venue_name, e.venue_name_ar,
+                e.venue_address, e.venue_map_url, e.venue_lat, e.venue_lng,
+                e.allow_rsvp, e.allow_plus_one, e.cover_image_url
+            FROM invitations i
+            JOIN events e ON e.id = i.event_id
+            WHERE i.token = :token
+        """),
+        {"token": token},
+    )
+    row = result.mappings().first()
+    if not row:
+        raise HTTPException(404, "الدعوة غير موجودة")
+
+    if row["status"] == "revoked":
+        raise HTTPException(410, "تم إلغاء هذه الدعوة")
+
+    # Mark as viewed (update by primary key only)
+    if row["status"] in ("created", "sent"):
+        await db.execute(
+            text("UPDATE invitations SET status = 'viewed', updated_at = now() WHERE id = :id AND token = :token"),
+            {"id": str(row["id"]), "token": token},
+        )
+        await db.commit()
+
+    return dict(row)
+
+
+# ══════════════════════════════════════════════
+# PUBLIC: RSVP (by token)
+# ══════════════════════════════════════════════
+
+@router.post("/rsvp/{token}")
+async def rsvp_invitation(
+    token: str, body: RsvpRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Public endpoint: RSVP to an invitation.
+    Narrow query: only fetches the 4 fields needed for validation."""
+    result = await db.execute(
+        text("""
+            SELECT i.id, i.status, e.allow_rsvp, e.allow_plus_one
+            FROM invitations i JOIN events e ON e.id = i.event_id
+            WHERE i.token = :token
+        """),
+        {"token": token},
+    )
+    row = result.mappings().first()
+    if not row:
+        raise HTTPException(404, "الدعوة غير موجودة")
+    if row["status"] in ("revoked", "expired"):
+        raise HTTPException(410, "الدعوة ملغاة أو منتهية")
+    if not row["allow_rsvp"]:
+        raise HTTPException(400, "RSVP غير مفعّل لهذا الحدث")
+
+    plus_one = body.plus_one_count if row["allow_plus_one"] else 0
+    new_status = "accepted" if body.status == "accepted" else ("declined" if body.status == "declined" else row["status"])
+
+    # Update by primary key + token double-check (prevents any cross-tenant leak)
+    await db.execute(
+        text("""
+            UPDATE invitations SET
+                rsvp_status = :rsvp, rsvp_at = now(), plus_one_count = :plus,
+                rsvp_message = :msg, status = :st, updated_at = now()
+            WHERE id = :id AND token = :token
+        """),
+        {"rsvp": body.status, "plus": plus_one, "msg": body.message, "st": new_status, "id": str(row["id"]), "token": token},
+    )
+    await db.commit()
+    return {"message": "تم تسجيل ردك بنجاح", "rsvp_status": body.status}
+
+
+# ══════════════════════════════════════════════
+# HELPER: Check quota
+# ══════════════════════════════════════════════
+
+async def _check_quota(db: AsyncSession, tenant_id: str, event_id: str, ticket_class: str):
+    """Check if event has room for more invitations of this class."""
+    result = await db.execute(
+        text("""
+            SELECT
+                CASE WHEN CAST(:tc AS ticket_class) = 'vip'::ticket_class THEN e.vip_quota ELSE e.normal_quota END AS quota,
+                COUNT(i.id) FILTER (
+                    WHERE i.ticket_class = CAST(:tc AS ticket_class)
+                      AND i.status NOT IN ('revoked','expired')
+                ) AS used
+            FROM events e
+            LEFT JOIN invitations i ON i.event_id = e.id
+            WHERE e.id = :eid AND e.tenant_id = :tid
+            GROUP BY e.id
+        """),
+        {"eid": event_id, "tid": tenant_id, "tc": ticket_class},
+    )
+    row = result.mappings().first()
+    if not row:
+        raise HTTPException(404, "الحدث غير موجود")
+    if row["quota"] > 0 and row["used"] >= row["quota"]:
+        raise HTTPException(400, f"تم الوصول للحد الأقصى لدعوات {ticket_class} ({row['quota']})")
+
+
+async def _generate_barcode_for_row(db: AsyncSession, tenant_id, event_id, inv: dict):
+    """Generate QR barcode data and optionally upload to storage.
+    
+    Strategy: Always set qr_data + signature (fast, no network).
+    Upload SVG/PNG to Storage only if available (non-blocking on failure).
+    """
+    try:
+        invite_id = str(inv["id"])
+        token = inv["token"]
+
+        # Step 1: Build payload + signature (CPU only, instant)
+        payload_info = barcode_service.build_barcode_payload(invite_id, token)
+
+        # Always update qr_data + signature (no storage needed)
+        await db.execute(
+            text("""
+                UPDATE invitations SET
+                    barcode_payload = :payload,
+                    barcode_signature = :sig,
+                    qr_data = :qr_data,
+                    updated_at = now()
+                WHERE id = :id
+            """),
+            {
+                "payload": payload_info["barcode_payload"],
+                "sig": payload_info["signature"],
+                "qr_data": payload_info["payload"],
+                "id": invite_id,
+            },
+        )
+
+        # Step 2: Try to upload images to storage (best-effort, 5s timeout)
+        try:
+            import asyncio
+
+            def _sync_upload():
+                """Run all sync storage I/O in a thread."""
+                bc = barcode_service.generate_barcode_for_invitation(invite_id, token)
+                svg_path = storage_service.upload_barcode_svg(tenant_id, event_id, inv["id"], bc["svg_bytes"])
+                png_path = storage_service.upload_barcode_png(tenant_id, event_id, inv["id"], bc["png_bytes"])
+                svg_url = storage_service.get_signed_url(svg_path, expires_in=86400 * 30)
+                png_url = storage_service.get_signed_url(png_path, expires_in=86400 * 30)
+                return svg_url, png_url
+
+            loop = asyncio.get_event_loop()
+            svg_url, png_url = await asyncio.wait_for(
+                loop.run_in_executor(None, _sync_upload),
+                timeout=5.0
+            )
+
+            await db.execute(
+                text("""
+                    UPDATE invitations SET
+                        barcode_svg_url = :svg,
+                        barcode_png_url = :png,
+                        updated_at = now()
+                    WHERE id = :id
+                """),
+                {"svg": svg_url, "png": png_url, "id": invite_id},
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Storage upload timed out for %s (will retry in batch)", invite_id)
+        except Exception as storage_err:
+            logger.warning(
+                "Storage upload skipped for %s (will retry in batch): %s",
+                invite_id, storage_err
+            )
+
+    except Exception as e:
+        logger.warning("Barcode generation failed for %s: %s", inv.get("id"), e)

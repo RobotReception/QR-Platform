@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 60" fill="none">
+  <defs>
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#DFC08A"/>
+      <stop offset="45%"  stop-color="#C9A96E"/>
+      <stop offset="100%" stop-color="#A8874D"/>
+    </linearGradient>
+    <linearGradient id="goldText" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#EDE0D4"/>
+      <stop offset="100%" stop-color="#C9A96E"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="1.5" result="coloredBlur"/>
+      <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- Q Circle Icon -->
+  <g filter="url(#glow)">
+    <!-- Outer ring -->
+    <circle cx="30" cy="30" r="26" stroke="url(#goldGrad)" stroke-width="5" fill="none"/>
+    <!-- Arrow shaft -->
+    <line x1="30" y1="30" x2="44" y2="16" stroke="url(#goldGrad)" stroke-width="3.5" stroke-linecap="round"/>
+    <!-- Arrow head -->
+    <polygon points="44,16 37,15 43,22" fill="url(#goldGrad)"/>
+    <!-- Tail curl -->
+    <path d="M30 38 Q33 44 30 50 Q27 54 25 52" stroke="url(#goldGrad)" stroke-width="3" fill="none" stroke-linecap="round"/>
+  </g>
+
+  <!-- "entry" text -->
+  <text x="66" y="38"
+    font-family="'Playfair Display', Georgia, serif"
+    font-size="26"
+    font-weight="700"
+    fill="url(#goldText)"
+    letter-spacing="-0.5"
+  >entry</text>
+</svg>

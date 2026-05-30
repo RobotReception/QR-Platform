@@ -1,0 +1,163 @@
+"""
+Supabase Storage Service.
+Handles file upload, download, signed URLs, and path management.
+All invitation assets stored in 'invitations' bucket with structured paths.
+
+Path structure:
+  {tenant_id}/{event_id}/barcodes/{invite_id}.svg
+  {tenant_id}/{event_id}/barcodes/{invite_id}.png
+  {tenant_id}/{event_id}/renders/{invite_id}.png
+  {tenant_id}/{event_id}/batches/{batch_id}/result.pdf
+  {tenant_id}/{event_id}/batches/{batch_id}/images.zip
+  {tenant_id}/{event_id}/batches/{batch_id}/preview_{n}.png
+"""
+import logging
+import asyncio
+from uuid import UUID
+from typing import Optional
+
+from app.database import get_supabase_admin
+from app.config import get_settings
+
+logger = logging.getLogger(__name__)
+settings = get_settings()
+
+BUCKET = "invitations"
+
+
+def _get_client():
+    return get_supabase_admin()
+
+
+async def ensure_bucket_exists():
+    """Create the invitations bucket if it doesn't exist."""
+    try:
+        client = _get_client()
+        buckets = client.storage.list_buckets()
+        bucket_names = [b.name for b in buckets]
+        if BUCKET not in bucket_names:
+            client.storage.create_bucket(
+                BUCKET,
+                options={"public": False, "file_size_limit": 524288000},  # 500MB
+            )
+            logger.info("Created storage bucket: %s", BUCKET)
+    except Exception as e:
+        logger.warning("Could not ensure bucket exists: %s", e)
+
+
+def build_path(tenant_id: UUID, event_id: UUID, *parts: str) -> str:
+    """Build a structured storage path."""
+    return f"{tenant_id}/{event_id}/{'/'.join(parts)}"
+
+
+def upload_file(
+    path: str,
+    file_data: bytes,
+    content_type: str = "application/octet-stream",
+) -> str:
+    """
+    Upload file to Supabase Storage.
+    Returns storage path (not a URL).
+    """
+    client = _get_client()
+    try:
+        client.storage.from_(BUCKET).upload(
+            path=path,
+            file=file_data,
+            file_options={"content-type": content_type, "upsert": "true"},
+        )
+        logger.debug("Uploaded: %s (%d bytes)", path, len(file_data))
+        return path
+    except Exception as e:
+        logger.error("Upload failed for %s: %s", path, e)
+        raise
+
+
+async def upload_bytes(
+    path: str,
+    file_data: bytes,
+    content_type: str = "application/octet-stream",
+) -> str:
+    """
+    Async wrapper for uploading bytes to storage.
+    Returns storage path (not a URL).
+    """
+    return await asyncio.to_thread(upload_file, path, file_data, content_type)
+
+
+def get_public_url(path: str) -> str:
+    """Get a public URL for a file (bucket must be public or use signed URL)."""
+    client = _get_client()
+    res = client.storage.from_(BUCKET).get_public_url(path)
+    return res
+
+
+def get_signed_url(path: str, expires_in: int = None) -> str:
+    """Get a signed URL valid for expires_in seconds.
+    Defaults to settings.signed_url_expiry (1 hour) if not specified."""
+    if expires_in is None:
+        expires_in = settings.signed_url_expiry
+    client = _get_client()
+    res = client.storage.from_(BUCKET).create_signed_url(path, expires_in)
+    return res.get("signedURL", "") if isinstance(res, dict) else res
+
+
+def download_file(path: str) -> bytes:
+    """Download file content from storage."""
+    client = _get_client()
+    return client.storage.from_(BUCKET).download(path)
+
+
+def delete_file(path: str) -> bool:
+    """Delete a file from storage."""
+    try:
+        client = _get_client()
+        client.storage.from_(BUCKET).remove([path])
+        return True
+    except Exception as e:
+        logger.warning("Delete failed for %s: %s", path, e)
+        return False
+
+
+def delete_folder(prefix: str) -> bool:
+    """Delete all files under a prefix (folder)."""
+    try:
+        client = _get_client()
+        files = client.storage.from_(BUCKET).list(prefix)
+        if files:
+            paths = [f"{prefix}/{f['name']}" for f in files]
+            client.storage.from_(BUCKET).remove(paths)
+        return True
+    except Exception as e:
+        logger.warning("Delete folder failed for %s: %s", prefix, e)
+        return False
+
+
+def upload_barcode_svg(tenant_id: UUID, event_id: UUID, invite_id: UUID, svg_data: bytes) -> str:
+    path = build_path(tenant_id, event_id, "barcodes", f"{invite_id}.svg")
+    return upload_file(path, svg_data, "image/svg+xml")
+
+
+def upload_barcode_png(tenant_id: UUID, event_id: UUID, invite_id: UUID, png_data: bytes) -> str:
+    path = build_path(tenant_id, event_id, "barcodes", f"{invite_id}.png")
+    return upload_file(path, png_data, "image/png")
+
+
+def upload_render_image(tenant_id: UUID, event_id: UUID, invite_id: UUID, png_data: bytes) -> str:
+    path = build_path(tenant_id, event_id, "renders", f"{invite_id}.png")
+    return upload_file(path, png_data, "image/png")
+
+
+def upload_batch_pdf(tenant_id: UUID, event_id: UUID, batch_id: UUID, pdf_data: bytes) -> str:
+    path = build_path(tenant_id, event_id, "batches", str(batch_id), "result.pdf")
+    return upload_file(path, pdf_data, "application/pdf")
+
+
+def upload_batch_zip(tenant_id: UUID, event_id: UUID, batch_id: UUID, zip_data: bytes) -> str:
+    path = build_path(tenant_id, event_id, "batches", str(batch_id), "images.zip")
+    return upload_file(path, zip_data, "application/zip")
+
+
+def upload_preview(tenant_id: UUID, event_id: UUID, batch_id: UUID, index: int, png_data: bytes) -> str:
+    path = build_path(tenant_id, event_id, "batches", str(batch_id), f"preview_{index}.png")
+    return upload_file(path, png_data, "image/png")

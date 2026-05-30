@@ -1,0 +1,345 @@
+import { useMemo } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { motion } from 'framer-motion'
+import {
+  Activity,
+  BarChart3,
+  CalendarDays,
+  Clock3,
+  LogOut,
+  MailCheck,
+  QrCode,
+  RefreshCcw,
+  Crown,
+  Ticket,
+  Users,
+  TrendingUp,
+  Zap,
+} from 'lucide-react'
+import { dashboardAPI } from '../api/dashboardApi'
+import { useAuthStore } from '@features/auth/store/authStore'
+import { WorkspaceShell } from '@features/workspace/components/WorkspaceShell'
+import { StatCard } from '../components/StatCard'
+import { MiniDonutChart } from '../components/MiniDonutChart'
+import { ActivityTimeline } from '../components/ActivityTimeline'
+import { MemberAvatarStack } from '../components/MemberAvatarStack'
+import { SubscriptionCard } from '../components/SubscriptionCard'
+import { TopEventsTable } from '../components/TopEventsTable'
+import { UsageGauge } from '../components/UsageGauge'
+import { DashboardSkeleton } from '../components/DashboardSkeleton'
+import type { DashboardAnalytics } from '../types'
+import './dashboard.css'
+
+/* ── Formatters ── */
+const numberFmt = new Intl.NumberFormat('ar')
+
+function n(value?: number | null) {
+  return numberFmt.format(Number(value || 0))
+}
+
+function pct(part?: number, total?: number) {
+  if (!total) return 0
+  return Math.min(100, Math.round(((part || 0) / total) * 100))
+}
+
+function getGreeting(): string {
+  const h = new Date().getHours()
+  if (h < 12) return 'صباح الخير'
+  if (h < 17) return 'مساء الخير'
+  return 'مساء النور'
+}
+
+/* ── Fake sparkline data generator (until real time-series API exists) ── */
+function fakeSparkline(base: number, variance = 0.3, points = 8): number[] {
+  const data: number[] = []
+  let current = base * (1 - variance)
+  for (let i = 0; i < points; i++) {
+    current += (Math.random() - 0.3) * base * variance * 0.5
+    data.push(Math.max(0, Math.round(current)))
+  }
+  // Ensure last value is close to actual
+  data[data.length - 1] = base
+  return data
+}
+
+/* ── Section Header ── */
+function SectionHeader({ icon: Icon, kicker, title }: { icon: typeof BarChart3; kicker: string; title: string }) {
+  return (
+    <div className="dash-section-head">
+      <div>
+        <span className="dash-kicker">{kicker}</span>
+        <h2>{title}</h2>
+      </div>
+      <Icon size={20} className="dash-section-head__icon" />
+    </div>
+  )
+}
+
+/* ── Progress Row ── */
+function ProgressRow({ label, value, total, color }: { label: string; value: number; total: number; color?: string }) {
+  const percentage = pct(value, total)
+  return (
+    <div className="progress-row">
+      <div className="progress-row__meta">
+        <span>{label}</span>
+        <strong>{n(value)} / {n(total)}</strong>
+      </div>
+      <div className="progress-row__track">
+        <motion.span
+          initial={{ width: 0 }}
+          animate={{ width: `${percentage}%` }}
+          transition={{ duration: 0.8, ease: [0, 0, 0.2, 1], delay: 0.3 }}
+          style={color ? { background: color } : undefined}
+        />
+      </div>
+    </div>
+  )
+}
+
+/* ══════════════════════════════════════════════════════════════
+   ██ DASHBOARD CONTENT
+   ══════════════════════════════════════════════════════════════ */
+
+function DashboardContent({ data }: { data: DashboardAnalytics }) {
+  const totalInvitations = data.invitations.total_invitations || 0
+  const checkedIn = data.guests.checked_in_guests || 0
+  const checkinRate = pct(checkedIn, totalInvitations)
+  const openedRate = pct(data.invitations.opened_invitations, totalInvitations)
+
+  const greeting = useMemo(() => getGreeting(), [])
+
+  const donutSegments = useMemo(() => [
+    { value: data.invitations.opened_invitations || 0, color: '#C9A96E', label: 'مفتوح' },
+    { value: (data.invitations.delivered_invitations || 0) - (data.invitations.opened_invitations || 0), color: '#3B82F6', label: 'مُسلم' },
+    { value: (data.invitations.sent_invitations || 0) - (data.invitations.delivered_invitations || 0), color: '#64748B', label: 'مُرسل' },
+  ].filter(s => s.value > 0), [data.invitations])
+
+  const usageItems = useMemo(() => {
+    if (data.usage.length) return data.usage.slice(0, 4)
+    return [
+      { key: 'الأحداث', value: data.events.total_events || 0 },
+      { key: 'الدعوات', value: totalInvitations },
+      { key: 'الأعضاء', value: data.members.total_members || 0 },
+    ]
+  }, [data, totalInvitations])
+
+  return (
+    <WorkspaceShell
+      title={`${greeting} 👋`}
+      subtitle={`${data.tenant?.name || 'مساحة العمل'} · ${data.tenant?.slug || 'tenant'}`}
+      actions={
+        <>
+          <span className="dash-pill"><Crown size={16} />{data.subscription?.plan_name || data.tenant?.plan || 'Free'}</span>
+          <button className="dash-icon-btn" onClick={() => window.location.reload()} aria-label="تحديث">
+            <RefreshCcw size={18} />
+          </button>
+        </>
+      }
+    >
+      {/* ═══ KPI STAT CARDS ═══ */}
+      <section className="dash-stats-grid" aria-label="مؤشرات الأداء">
+        <StatCard
+          title="الأحداث"
+          value={data.events.total_events || 0}
+          delta={`${n(data.events.active_events)} نشط`}
+          deltaType="positive"
+          icon={CalendarDays}
+          tone="gold"
+          sparkData={fakeSparkline(data.events.total_events || 0)}
+          index={0}
+        />
+        <StatCard
+          title="الدعوات"
+          value={totalInvitations}
+          delta={`${n(data.invitations.sent_invitations)} مرسل`}
+          deltaType="neutral"
+          icon={Ticket}
+          tone="blue"
+          sparkData={fakeSparkline(totalInvitations)}
+          index={1}
+        />
+        <StatCard
+          title="تسجيل الحضور"
+          value={checkinRate}
+          formatted={`${checkinRate}%`}
+          delta={`${n(checkedIn)} حضور مؤكد`}
+          deltaType="positive"
+          icon={QrCode}
+          tone="green"
+          sparkData={fakeSparkline(checkinRate, 0.2)}
+          index={2}
+        />
+        <StatCard
+          title="الفريق"
+          value={data.members.total_members || 0}
+          delta={`${n(data.members.active_members)} عضو نشط`}
+          deltaType="neutral"
+          icon={Users}
+          tone="purple"
+          sparkData={fakeSparkline(data.members.total_members || 0, 0.15)}
+          index={3}
+        />
+      </section>
+
+      {/* ═══ PRIMARY GRID: Performance + Subscription ═══ */}
+      <section className="dash-bento dash-bento--primary">
+        {/* ── Performance Panel ── */}
+        <motion.div
+          className="dash-panel dash-panel--wide"
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.35 }}
+        >
+          <SectionHeader icon={BarChart3} kicker="الأداء العام" title="مؤشرات الدعوات والحضور" />
+
+          <div className="performance-grid">
+            <div className="performance-bars">
+              <ProgressRow label="فتح الدعوات" value={data.invitations.opened_invitations || 0} total={totalInvitations} color="#C9A96E" />
+              <ProgressRow label="الدعوات المسلمة" value={data.invitations.delivered_invitations || 0} total={totalInvitations} color="#3B82F6" />
+              <ProgressRow label="الحضور المسجل" value={checkedIn} total={totalInvitations} color="#22C55E" />
+            </div>
+            <div className="performance-donut">
+              <MiniDonutChart
+                segments={donutSegments}
+                size={140}
+                strokeWidth={14}
+                centerValue={`${openedRate}%`}
+                centerLabel="معدل الفتح"
+              />
+            </div>
+          </div>
+
+          <div className="dash-split-metrics">
+            <div>
+              <strong>{openedRate}%</strong>
+              <span>معدل الفتح</span>
+            </div>
+            <div>
+              <strong>{n(data.templates.total_templates)}</strong>
+              <span>قوالب</span>
+            </div>
+            <div>
+              <strong>{n(data.audit.audit_7d)}</strong>
+              <span>نشاط خلال 7 أيام</span>
+            </div>
+          </div>
+        </motion.div>
+
+        {/* ── Subscription Panel ── */}
+        <SubscriptionCard
+          subscription={data.subscription}
+          planFallback={data.tenant?.plan}
+        />
+      </section>
+
+      {/* ═══ SECONDARY GRID: Events + Usage + Team ═══ */}
+      <section className="dash-bento dash-bento--secondary">
+        {/* ── Top Events ── */}
+        <motion.div
+          className="dash-panel"
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.45 }}
+        >
+          <SectionHeader icon={TrendingUp} kicker="الأحداث الأعلى" title="حسب حجم الدعوات" />
+          <TopEventsTable events={data.top_events} />
+        </motion.div>
+
+        {/* ── Usage ── */}
+        <motion.div
+          className="dash-panel"
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.5 }}
+        >
+          <SectionHeader icon={Zap} kicker="الاستخدام" title="استهلاك هذا الشهر" />
+          <div className="usage-gauges">
+            {usageItems.map((item) => (
+              <UsageGauge
+                key={item.key}
+                label={item.key.replace(/_/g, ' ')}
+                value={item.value}
+                max={Math.max(item.value * 1.5, 100)}
+              />
+            ))}
+          </div>
+        </motion.div>
+
+        {/* ── Team ── */}
+        <motion.div
+          className="dash-panel"
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.55 }}
+        >
+          <SectionHeader icon={Users} kicker="الفريق" title="الأعضاء" />
+          <MemberAvatarStack members={data.members_list} />
+        </motion.div>
+      </section>
+
+      {/* ═══ ACTIVITY TIMELINE ═══ */}
+      <motion.section
+        className="dash-panel"
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, delay: 0.6 }}
+      >
+        <SectionHeader icon={Clock3} kicker="النشاط الأخير" title="سجل العمليات" />
+        <ActivityTimeline items={data.recent_activity} />
+      </motion.section>
+    </WorkspaceShell>
+  )
+}
+
+/* ══════════════════════════════════════════════════════════════
+   ██ DASHBOARD PAGE (Root)
+   ══════════════════════════════════════════════════════════════ */
+
+export default function DashboardPage() {
+  const clearAuth = useAuthStore(s => s.clearAuth)
+  const currentTenantId = useAuthStore(s => s.currentTenantId)
+  const { data, isLoading, isError, refetch } = useQuery({
+    queryKey: ['dashboard', currentTenantId],
+    queryFn: dashboardAPI.analytics,
+    enabled: Boolean(currentTenantId),
+  })
+
+  if (!currentTenantId) {
+    return (
+      <div className="dash-state">
+        <div className="dash-state__icon-wrap">
+          <MailCheck size={34} />
+        </div>
+        <h1>لا توجد مساحة عمل محددة</h1>
+        <p>سجّل الدخول مرة أخرى لاختيار مساحة العمل.</p>
+        <button onClick={clearAuth}>تسجيل الخروج</button>
+      </div>
+    )
+  }
+
+  if (isLoading) {
+    return (
+      <WorkspaceShell title="لوحة التحكم" subtitle="جار التحميل...">
+        <DashboardSkeleton />
+      </WorkspaceShell>
+    )
+  }
+
+  if (isError || !data) {
+    return (
+      <div className="dash-state">
+        <div className="dash-state__icon-wrap dash-state__icon-wrap--error">
+          <Activity size={34} />
+        </div>
+        <h1>تعذر تحميل البيانات</h1>
+        <p>تحقق من اتصال الـ API ومساحة العمل الحالية.</p>
+        <button onClick={() => refetch()}>إعادة المحاولة</button>
+        <button className="dash-state__ghost" onClick={clearAuth}>
+          <LogOut size={16} />تسجيل الخروج
+        </button>
+      </div>
+    )
+  }
+
+  return <DashboardContent data={data} />
+}

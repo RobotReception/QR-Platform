@@ -1,0 +1,169 @@
+/* ═══════════════════════════════════════════════ */
+/* Check-in Feature — Premium Dark Theme          */
+/* ═══════════════════════════════════════════════ */
+
+/* ── Event Bar ── */
+.checkin-event-bar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 16px 0; border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.checkin-event-bar label {
+  font-size: 0.85rem; font-weight: 600; color: var(--color-text-muted);
+  white-space: nowrap;
+}
+.checkin-event-select { min-width: 260px; }
+
+/* ── Scanner Section ── */
+.checkin-scanner-section {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 24px; padding: 32px 0;
+}
+.checkin-scanner-card {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 12px; padding: 40px 32px; max-width: 520px; width: 100%;
+  background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 20px; text-align: center;
+}
+.checkin-scanner-icon {
+  width: 80px; height: 80px; border-radius: 20px;
+  background: linear-gradient(135deg, rgba(201,169,110,0.12), rgba(201,169,110,0.04));
+  display: flex; align-items: center; justify-content: center;
+  color: var(--color-primary);
+}
+.checkin-scanner-card h3 { color: var(--color-text); font-size: 1.1rem; margin: 0; }
+.checkin-scanner-card p { color: var(--color-text-muted); font-size: 0.85rem; max-width: 360px; line-height: 1.6; }
+
+.checkin-scan-form {
+  display: flex; gap: 8px; width: 100%; margin-top: 8px;
+}
+.checkin-scan-input-wrap {
+  position: relative; flex: 1;
+}
+.checkin-scan-icon {
+  position: absolute; left: 14px; top: 50%; transform: translateY(-50%);
+  color: var(--color-text-muted); pointer-events: none;
+}
+.checkin-scan-input {
+  width: 100%; padding: 14px 14px 14px 44px;
+  background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 12px; color: var(--color-text); font-size: 1rem;
+  font-family: monospace; letter-spacing: 1px; transition: border-color 0.2s;
+}
+.checkin-scan-input:focus {
+  outline: none; border-color: var(--color-primary);
+  box-shadow: 0 0 0 4px rgba(201,169,110,0.1);
+}
+.checkin-scan-btn {
+  padding: 14px 28px !important; border-radius: 12px !important;
+  font-size: 0.95rem !important;
+}
+
+/* ── Scan Result ── */
+.scan-result {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 12px; padding: 32px; max-width: 520px; width: 100%;
+  border: 2px solid; border-radius: 20px;
+  animation: scaleIn 0.3s ease;
+}
+.scan-result__icon { animation: bounceIn 0.4s ease; }
+.scan-result__message {
+  font-size: 1.2rem; font-weight: 700; text-align: center;
+}
+.scan-result__guest {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 1rem; color: var(--color-text);
+}
+.scan-result__vip {
+  display: flex; align-items: center; gap: 4px;
+  padding: 3px 10px; border-radius: 12px;
+  background: rgba(201,169,110,0.15); color: #C9A96E;
+  font-size: 0.75rem; font-weight: 700;
+}
+.scan-result__event {
+  font-size: 0.85rem; color: var(--color-text-muted);
+}
+.scan-result__count {
+  font-size: 0.8rem; color: var(--color-text-muted);
+  padding: 4px 12px; background: rgba(255,255,255,0.04);
+  border-radius: 8px;
+}
+
+/* ── Stats Grid ── */
+.checkin-stats-section { padding: 24px 0; }
+.checkin-stats-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+.checkin-stat-card {
+  padding: 20px; border-radius: 14px;
+  background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.checkin-stat-card--skeleton {
+  animation: pulse 1.5s ease infinite;
+}
+.checkin-stat-card__header {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 0.8rem; color: var(--color-text-muted);
+}
+.checkin-stat-card__value {
+  font-size: 2rem; font-weight: 800; line-height: 1;
+}
+.checkin-stat-card__total {
+  font-size: 1rem; font-weight: 400; color: var(--color-text-muted); margin-right: 4px;
+}
+.checkin-stat-card__bar {
+  height: 4px; background: rgba(255,255,255,0.06); border-radius: 2px;
+  overflow: hidden;
+}
+.checkin-stat-card__bar-fill {
+  height: 100%; border-radius: 2px;
+  transition: width 0.6s ease;
+}
+
+/* ── Recent Check-ins ── */
+.checkin-recent {
+  margin-top: 24px;
+}
+.checkin-recent h4 {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 0.85rem; font-weight: 700; color: var(--color-text-muted);
+  margin: 0 0 12px; text-transform: uppercase; letter-spacing: 0.5px;
+}
+.checkin-recent-list { display: flex; flex-direction: column; gap: 4px; }
+.checkin-recent-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; background: rgba(255,255,255,0.02);
+  border-radius: 8px; border: 1px solid rgba(255,255,255,0.04);
+}
+.checkin-recent-name {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 0.85rem; color: var(--color-text);
+}
+.checkin-recent-time {
+  font-size: 0.75rem; color: var(--color-text-muted); font-family: monospace;
+}
+
+/* ── Skeletons ── */
+.skeleton-line {
+  height: 12px; border-radius: 4px;
+  background: rgba(255,255,255,0.06);
+}
+.skeleton-line--lg { height: 28px; width: 40%; margin-top: 4px; }
+
+/* ── Animations ── */
+@keyframes bounceIn {
+  0% { transform: scale(0); }
+  50% { transform: scale(1.2); }
+  100% { transform: scale(1); }
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@media (max-width: 768px) {
+  .checkin-stats-grid { grid-template-columns: 1fr 1fr; }
+  .checkin-scan-form { flex-direction: column; }
+  .checkin-scanner-card { padding: 24px 16px; }
+}

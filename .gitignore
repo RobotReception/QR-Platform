@@ -1,0 +1,17 @@
+.env
+.env.*
+!.env.example
+node_modules/
+*.log
+supabase.exe
+supabase.tar*
+.claude/
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.idea/
+.vscode/

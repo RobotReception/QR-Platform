@@ -1,0 +1,35 @@
+============================================================
+USERS ENDPOINT TEST
+============================================================
+
+--- SIGNUP ---
+Signup: 201
+  user_id: c8afb7a9-3555-4a11-9c76-bafa7a8ddfe8
+  tenant_id: 1a57361b-9c2a-4b9a-9e3d-2e99cb3575a6
+
+--- LOGIN ---
+Login: 200
+  token: eyJhbGciOiJIUzI1NiIsInR5cCI6Ik...
+
+--- GET /tenants/current/members ---
+List members: 200, count=1
+
+--- POST /tenants/current/members ---
+Create member: 400
+  Response: {"detail": "فشل إنشاء المستخدم: User not allowed"}
+
+--- GET /roles ---
+List roles: 200
+  count=5
+  keys: ['id', 'tenant_id', 'name', 'description', 'is_system_role', 'created_at', 'permissions']
+
+--- POST /invites ---
+Create invite: 500
+  Response: {"error": "HTTP Error 500: Internal Server Error"}
+
+--- GET /invites ---
+List invites: 200
+  count=0
+
+============================================================
+DONE

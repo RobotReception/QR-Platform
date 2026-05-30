@@ -1,0 +1,195 @@
+/* ============================================================
+   DESIGN TOKENS — Qentry Platform
+   Brand: Luxury Dark / Gold
+   Primary: #C9A96E | BG: #0F172A | Surface: #1E293B
+   Accent: #F8F5F0  | Highlight: #EDE0D4
+   المرجع الوحيد لكل الألوان والقيم البصرية في المشروع
+   ============================================================ */
+
+:root {
+  /* ──────────────────────────────────────
+     🎨 COLORS — الألوان الأساسية
+  ────────────────────────────────────── */
+
+  /* Primary — ذهبي ناعم */
+  --color-primary:          #C9A96E;
+  --color-primary-light:    #DFC08A;
+  --color-primary-dark:     #A8874D;
+  --color-primary-subtle:   rgba(201, 169, 110, 0.12);
+  --color-primary-border:   rgba(201, 169, 110, 0.25);
+
+  /* Backgrounds — خلفيات داكنة */
+  --color-bg:               #0F172A;   /* الخلفية الرئيسية */
+  --color-bg-card:          #1E293B;   /* خلفية البطاقات */
+  --color-bg-elevated:      #263548;   /* عناصر مرتفعة */
+  --color-bg-hover:         rgba(201, 169, 110, 0.06);
+
+  /* Accent — بيج راقي */
+  --color-accent:           #EDE0D4;
+  --color-accent-muted:     #D4C4B0;
+
+  /* Text — نصوص */
+  --color-text:             #F8F5F0;   /* نص رئيسي */
+  --color-text-muted:       #94A3B8;   /* نص ثانوي */
+  --color-text-subtle:      #64748B;   /* نص خفي */
+  --color-text-disabled:    #475569;
+
+  /* Borders — حدود */
+  --color-border:           rgba(255, 255, 255, 0.08);
+  --color-border-strong:    rgba(255, 255, 255, 0.15);
+  --color-border-gold:      rgba(201, 169, 110, 0.3);
+
+  /* Status Colors */
+  --color-success:          #22C55E;
+  --color-success-bg:       rgba(34, 197, 94, 0.1);
+  --color-warning:          #F59E0B;
+  --color-warning-bg:       rgba(245, 158, 11, 0.1);
+  --color-danger:           #EF4444;
+  --color-danger-bg:        rgba(239, 68, 68, 0.1);
+  --color-info:             #3B82F6;
+  --color-info-bg:          rgba(59, 130, 246, 0.1);
+
+  /* ──────────────────────────────────────
+     🌈 GRADIENTS — التدرجات
+  ────────────────────────────────────── */
+
+  --gradient-gold:          linear-gradient(135deg, #C9A96E 0%, #EDE0D4 100%);
+  --gradient-gold-soft:     linear-gradient(135deg, rgba(201,169,110,0.9), rgba(237,224,212,0.9));
+  --gradient-surface:       linear-gradient(180deg, #1E293B 0%, #0F172A 100%);
+  --gradient-card:          linear-gradient(145deg, rgba(30,41,59,0.85) 0%, rgba(15,23,42,0.95) 100%);
+  --gradient-hero:          linear-gradient(135deg, #0F172A 0%, #1a2640 50%, #0F172A 100%);
+  --gradient-shimmer:       linear-gradient(90deg, transparent 0%, rgba(201,169,110,0.08) 50%, transparent 100%);
+
+  /* ──────────────────────────────────────
+     💎 GLASS EFFECT — تأثير الزجاج
+  ────────────────────────────────────── */
+
+  --glass-bg:               rgba(30, 41, 59, 0.65);
+  --glass-bg-strong:        rgba(15, 23, 42, 0.85);
+  --glass-blur:             blur(12px);
+  --glass-blur-strong:      blur(24px);
+  --glass-border:           1px solid rgba(255, 255, 255, 0.08);
+  --glass-border-gold:      1px solid rgba(201, 169, 110, 0.2);
+
+  /* ──────────────────────────────────────
+     🔤 TYPOGRAPHY — الخطوط
+  ────────────────────────────────────── */
+
+  /* Font Families */
+  --font-ar:                'Cairo', 'Tajawal', sans-serif;
+  --font-en:                'Inter', sans-serif;
+  --font-title-ar:          'Amiri', serif;
+  --font-title-en:          'Playfair Display', serif;
+
+  /* Font Sizes — مقاسات الخطوط */
+  --text-xs:                0.75rem;    /* 12px */
+  --text-sm:                0.875rem;   /* 14px */
+  --text-base:              1rem;       /* 16px */
+  --text-lg:                1.125rem;   /* 18px */
+  --text-xl:                1.25rem;    /* 20px */
+  --text-2xl:               1.5rem;     /* 24px */
+  --text-3xl:               1.875rem;   /* 30px */
+  --text-4xl:               2.25rem;    /* 36px */
+  --text-5xl:               3rem;       /* 48px */
+  --text-6xl:               3.75rem;    /* 60px */
+
+  /* Font Weights */
+  --font-light:             300;
+  --font-normal:            400;
+  --font-medium:            500;
+  --font-semibold:          600;
+  --font-bold:              700;
+  --font-extrabold:         800;
+
+  /* Line Heights */
+  --leading-tight:          1.25;
+  --leading-snug:           1.375;
+  --leading-normal:         1.5;
+  --leading-relaxed:        1.625;
+  --leading-loose:          2;
+
+  /* ──────────────────────────────────────
+     📐 SPACING — المسافات
+  ────────────────────────────────────── */
+
+  --space-0:    0;
+  --space-1:    0.25rem;    /* 4px */
+  --space-2:    0.5rem;     /* 8px */
+  --space-3:    0.75rem;    /* 12px */
+  --space-4:    1rem;       /* 16px */
+  --space-5:    1.25rem;    /* 20px */
+  --space-6:    1.5rem;     /* 24px */
+  --space-8:    2rem;       /* 32px */
+  --space-10:   2.5rem;     /* 40px */
+  --space-12:   3rem;       /* 48px */
+  --space-16:   4rem;       /* 64px */
+  --space-20:   5rem;       /* 80px */
+  --space-24:   6rem;       /* 96px */
+
+  /* ──────────────────────────────────────
+     🔲 BORDER RADIUS — انحناء الحواف
+  ────────────────────────────────────── */
+
+  --radius-xs:   4px;
+  --radius-sm:   6px;
+  --radius-md:   12px;
+  --radius-lg:   16px;
+  --radius-xl:   24px;
+  --radius-2xl:  32px;
+  --radius-full: 9999px;
+
+  /* ──────────────────────────────────────
+     🌑 SHADOWS — الظلال
+  ────────────────────────────────────── */
+
+  --shadow-sm:   0 1px 4px rgba(0, 0, 0, 0.2);
+  --shadow-md:   0 4px 12px rgba(0, 0, 0, 0.3);
+  --shadow-lg:   0 8px 24px rgba(0, 0, 0, 0.4);
+  --shadow-xl:   0 16px 48px rgba(0, 0, 0, 0.5);
+  --shadow-gold: 0 0 30px rgba(201, 169, 110, 0.2);
+  --shadow-glow: 0 0 60px rgba(201, 169, 110, 0.08);
+  --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.35);
+  --shadow-inset:inset 0 1px 0 rgba(255, 255, 255, 0.05);
+
+  /* ──────────────────────────────────────
+     ⚡ TRANSITIONS — الحركات
+  ────────────────────────────────────── */
+
+  --duration-fast:    150ms;
+  --duration-normal:  250ms;
+  --duration-slow:    400ms;
+  --duration-slower:  600ms;
+
+  --ease-default:     cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-in:          cubic-bezier(0.4, 0, 1, 1);
+  --ease-out:         cubic-bezier(0, 0, 0.2, 1);
+  --ease-spring:      cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-smooth:      cubic-bezier(0.25, 0.46, 0.45, 0.94);
+
+  --transition-base:  all var(--duration-normal) var(--ease-default);
+  --transition-fast:  all var(--duration-fast)   var(--ease-default);
+  --transition-slow:  all var(--duration-slow)   var(--ease-smooth);
+
+  /* ──────────────────────────────────────
+     📏 LAYOUT — تخطيط الصفحات
+  ────────────────────────────────────── */
+
+  --sidebar-width:       260px;
+  --sidebar-collapsed:   64px;
+  --topbar-height:       64px;
+   --container-max:       100%;
+   --content-max:         100%;
+
+  /* ──────────────────────────────────────
+     🔢 Z-INDEX — طبقات العناصر
+  ────────────────────────────────────── */
+
+  --z-base:     0;
+  --z-raised:   10;
+  --z-dropdown: 100;
+  --z-sticky:   200;
+  --z-overlay:  300;
+  --z-modal:    400;
+  --z-toast:    500;
+  --z-tooltip:  600;
+}

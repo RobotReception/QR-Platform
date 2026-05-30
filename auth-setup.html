@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>إعداد المصادقة - نظام إدارة القوالب</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+            max-width: 600px;
+            width: 100%;
+            padding: 40px;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .setup-code {
+            background: #f5f5f5;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            color: #333;
+            overflow-x: auto;
+            line-height: 1.6;
+        }
+
+        .setup-code code {
+            display: block;
+            margin-bottom: 8px;
+            color: #667eea;
+        }
+
+        .setup-code code:last-child {
+            margin-bottom: 0;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        button {
+            flex: 1;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5568d3;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #333;
+            border: 1px solid #e0e0e0;
+        }
+
+        .btn-secondary:hover {
+            background: #e8e8e8;
+        }
+
+        .steps {
+            margin-top: 30px;
+            border-top: 2px solid #f0f0f0;
+            padding-top: 20px;
+        }
+
+        .step {
+            display: flex;
+            margin-bottom: 20px;
+        }
+
+        .step-number {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: #667eea;
+            color: white;
+            font-weight: bold;
+            flex-shrink: 0;
+            margin-left: 15px;
+        }
+
+        .step-content h3 {
+            color: #333;
+            margin-bottom: 5px;
+            font-size: 14px;
+        }
+
+        .step-content p {
+            color: #666;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        .alert {
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            font-size: 13px;
+        }
+
+        .alert-success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+
+        .alert-info {
+            background: #d1ecf1;
+            border: 1px solid #bee5eb;
+            color: #0c5460;
+        }
+
+        .code-block {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            overflow-x: auto;
+            margin: 10px 0;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .success-message {
+            padding: 15px;
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔐 إعداد المصادقة</h1>
+        <p class="subtitle">نظام إدارة القوالب - نسخ البيانات إلى localStorage</p>
+
+        <div id="loadingMessage" class="alert alert-info">
+            جاري تحضير بيانات المصادقة...
+        </div>
+
+        <div id="successMessage" class="hidden success-message">
+            ✅ تم حفظ البيانات بنجاح! سيتم إعادة التوجيه الآن...
+        </div>
+
+        <div id="content" class="hidden">
+            <div class="alert alert-info">
+                اتبع الخطوات أدناه لتفعيل المصادقة في متصفحك
+            </div>
+
+            <div class="setup-code" id="setupCode">
+                <code>// جاري التحضير...</code>
+            </div>
+
+            <div class="button-group">
+                <button class="btn-primary" onclick="copyToClipboard()">📋 انسخ الكود</button>
+                <button class="btn-secondary" onclick="applyDirectly()">⚡ طبق مباشرة</button>
+            </div>
+
+            <div class="steps">
+                <h3 style="margin-bottom: 15px; color: #333;">الخطوات:</h3>
+
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <div class="step-content">
+                        <h3>افتح Developer Tools</h3>
+                        <p>اضغط F12 أو Right Click → Inspect</p>
+                    </div>
+                </div>
+
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <div class="step-content">
+                        <h3>انسخ الكود</h3>
+                        <p>انقر على زر "انسخ الكود" أعلاه</p>
+                    </div>
+                </div>
+
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <div class="step-content">
+                        <h3>الصق في Console</h3>
+                        <p>اختر تبويب Console وألصق الكود</p>
+                    </div>
+                </div>
+
+                <div class="step">
+                    <div class="step-number">4</div>
+                    <div class="step-content">
+                        <h3>اضغط Enter</h3>
+                        <p>ستُحفظ البيانات وتُعاد تحميل الصفحة</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'http://127.0.0.1:8000';
+
+        async function initializeAuth() {
+            try {
+                // جلب بيانات المصادقة من الخادم
+                const response = await fetch('/api/setup-auth-data.json').catch(() => null);
+
+                if (response && response.ok) {
+                    const data = await response.json();
+                    setupCode(data);
+                } else {
+                    // استخدم الكود الافتراضي
+                    setupCode({
+                        token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJiMjQ4Y2M3Ny1mYmI5LTRiNTYtYTM2MC1kNWRjYWY1ZjY5MzgiLCJlbWFpbCI6Im93bmVyQGV4YW1wbGUuY29tIiwiYXVkIjoiYXV0aGVudGljYXRlZCIsInJvbGUiOiJhdXRoZW50aWNhdGVkIiwiaWF0IjoxNzc4OTEwNDExLCJleHAiOjE3Nzg5OTY4MTF9.viWaK7GFvZlluzd_2uWvMn9xcGoWCvzd4Ur4gzryIXE',
+                        tenant_id: '45e2bbee-4689-44b9-b803-1ee07f22e168',
+                        user_id: 'b248cc77-fbb9-4b56-a360-d5dcaf5f6938'
+                    });
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                setupCode({
+                    token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJiMjQ4Y2M3Ny1mYmI5LTRiNTYtYTM2MC1kNWRjYWY1ZjY5MzgiLCJlbWFpbCI6Im93bmVyQGV4YW1wbGUuY29tIiwiYXVkIjoiYXV0aGVudGljYXRlZCIsInJvbGUiOiJhdXRoZW50aWNhdGVkIiwiaWF0IjoxNzc4OTEwNDExLCJleHAiOjE3Nzg5OTY4MTF9.viWaK7GFvZlluzd_2uWvMn9xcGoWCvzd4Ur4gzryIXE',
+                    tenant_id: '45e2bbee-4689-44b9-b803-1ee07f22e168',
+                    user_id: 'b248cc77-fbb9-4b56-a360-d5dcaf5f6938'
+                });
+            }
+        }
+
+        function setupCode(data) {
+            const code = `localStorage.setItem('qentry_access_token', '${data.token}');
+localStorage.setItem('qentry_tenant_id', '${data.tenant_id}');
+localStorage.setItem('qentry_user', '${data.user_id}');
+location.href = 'http://localhost:5173';`;
+
+            const codeElement = document.getElementById('setupCode');
+            codeElement.innerHTML = code
+                .split('\n')
+                .map(line => `<code>${line}</code>`)
+                .join('');
+
+            document.getElementById('loadingMessage').classList.add('hidden');
+            document.getElementById('content').classList.remove('hidden');
+
+            window.authData = { ...data, code };
+        }
+
+        function copyToClipboard() {
+            const code = window.authData.code;
+            navigator.clipboard.writeText(code).then(() => {
+                alert('تم نسخ الكود! الصقه في Console (F12)');
+            });
+        }
+
+        function applyDirectly() {
+            localStorage.setItem('qentry_access_token', window.authData.token);
+            localStorage.setItem('qentry_tenant_id', window.authData.tenant_id);
+            localStorage.setItem('qentry_user', window.authData.user_id);
+
+            document.getElementById('content').classList.add('hidden');
+            document.getElementById('successMessage').classList.remove('hidden');
+
+            setTimeout(() => {
+                window.location.href = 'http://localhost:5173';
+            }, 2000);
+        }
+
+        // Initialize on load
+        document.addEventListener('DOMContentLoaded', initializeAuth);
+    </script>
+</body>
+</html>
