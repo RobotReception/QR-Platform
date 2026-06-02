@@ -1,0 +1,752 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   ExcelImportDialog.css
+   أنماط احترافية وجذابة لواجهة استيراد Excel
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.excel-dialog-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(2px);
+  animation: fadeIn 0.2s ease-in-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    backdrop-filter: blur(0px);
+  }
+  to {
+    opacity: 1;
+    backdrop-filter: blur(2px);
+  }
+}
+
+.excel-dialog {
+  background: white;
+  border-radius: 12px;
+  width: 90%;
+  max-width: 900px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  animation: slideUp 0.3s ease-out;
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Header
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.excel-dialog__header {
+  padding: 24px;
+  border-bottom: 1px solid #e5e7eb;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.excel-dialog__title {
+  font-size: 20px;
+  font-weight: 600;
+  color: #1f2937;
+  margin: 0;
+}
+
+.excel-dialog__close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #6b7280;
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.excel-dialog__close:hover {
+  background: #f3f4f6;
+  color: #1f2937;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Content
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.excel-dialog__content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+}
+
+.excel-dialog__stage {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Upload Box
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.excel-upload-box {
+  border: 2px dashed #d1d5db;
+  border-radius: 12px;
+  padding: 40px;
+  text-align: center;
+  background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%);
+  transition: all 0.3s;
+}
+
+.excel-upload-box:hover {
+  border-color: #10b981;
+  background: linear-gradient(135deg, #ecfdf5 0%, #f0fdf4 100%);
+}
+
+.excel-upload-box__icon {
+  color: #10b981;
+  margin-bottom: 16px;
+  display: flex;
+  justify-content: center;
+}
+
+.excel-upload-box h3 {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1f2937;
+  margin: 0 0 8px 0;
+}
+
+.excel-upload-box p {
+  color: #6b7280;
+  margin: 0 0 24px 0;
+  font-size: 14px;
+}
+
+.excel-upload-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-bottom: 32px;
+  flex-wrap: wrap;
+}
+
+.excel-upload-btn,
+.excel-template-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 24px;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.excel-upload-btn {
+  background: #10b981;
+  color: white;
+}
+
+.excel-upload-btn:hover {
+  background: #059669;
+  transform: translateY(-2px);
+  box-shadow: 0 10px 15px rgba(16, 185, 129, 0.2);
+}
+
+.excel-template-btn {
+  background: white;
+  color: #3b82f6;
+  border: 1px solid #3b82f6;
+}
+
+.excel-template-btn:hover {
+  background: #eff6ff;
+}
+
+.excel-upload-hint {
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+  border-radius: 8px;
+  padding: 16px;
+  text-align: right;
+}
+
+.excel-hint-title {
+  font-weight: 600;
+  color: #92400e;
+  margin-bottom: 12px;
+}
+
+.excel-hint-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.excel-hint-list li {
+  font-size: 13px;
+  color: #78350f;
+  line-height: 1.5;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Status Alert
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.excel-status-alert {
+  display: flex;
+  gap: 16px;
+  padding: 16px;
+  border-radius: 10px;
+  border-left: 4px solid;
+}
+
+.excel-status-alert--success {
+  background: #ecfdf5;
+  border-left-color: #10b981;
+}
+
+.excel-status-alert--warning {
+  background: #fefce8;
+  border-left-color: #f59e0b;
+}
+
+.excel-status-alert--error {
+  background: #fef2f2;
+  border-left-color: #ef4444;
+}
+
+.excel-status-alert__icon {
+  display: flex;
+  align-items: flex-start;
+  flex-shrink: 0;
+  color: inherit;
+}
+
+.excel-status-alert--success .excel-status-alert__icon {
+  color: #10b981;
+}
+
+.excel-status-alert--warning .excel-status-alert__icon {
+  color: #f59e0b;
+}
+
+.excel-status-alert--error .excel-status-alert__icon {
+  color: #ef4444;
+}
+
+.excel-status-alert__content {
+  flex: 1;
+}
+
+.excel-status-alert__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.excel-status-alert__desc {
+  margin: 4px 0 0 0;
+  font-size: 13px;
+  color: #6b7280;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Errors Box
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.excel-errors-box {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.excel-errors-box__title {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #dc2626;
+}
+
+.excel-errors-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.excel-error-item {
+  display: flex;
+  gap: 8px;
+  font-size: 13px;
+  color: #7f1d1d;
+  line-height: 1.5;
+}
+
+.excel-error-icon {
+  flex-shrink: 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Sections (Collapsible)
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.excel-section {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.excel-section__header {
+  width: 100%;
+  padding: 12px 16px;
+  background: #f9fafb;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2937;
+  transition: all 0.2s;
+}
+
+.excel-section__header:hover {
+  background: #f3f4f6;
+}
+
+.excel-section__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.excel-section__header .rotated {
+  transform: rotate(180deg);
+  transition: transform 0.2s;
+}
+
+.excel-section__content {
+  padding: 16px;
+  background: white;
+  animation: slideDown 0.2s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    max-height: 0;
+  }
+  to {
+    opacity: 1;
+    max-height: 1000px;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Statistics Grid
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.excel-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.excel-stat-card {
+  padding: 16px;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  text-align: center;
+}
+
+.excel-stat-card--success {
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+}
+
+.excel-stat-card--warning {
+  background: #fefce8;
+  border-color: #fef08a;
+}
+
+.excel-stat-label {
+  font-size: 12px;
+  color: #6b7280;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.excel-stat-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Quota Check
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.excel-quota-check {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.excel-quota-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+}
+
+.excel-quota-label {
+  flex: 1;
+  color: #4b5563;
+  font-weight: 500;
+}
+
+.excel-quota-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: #10b981;
+  min-width: 50px;
+}
+
+.excel-quota-value--error {
+  color: #ef4444;
+}
+
+.excel-quota-remaining {
+  font-size: 12px;
+  color: #6b7280;
+  min-width: 80px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Columns List
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.excel-columns-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.excel-column-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: #f9fafb;
+  border-radius: 6px;
+  border-left: 3px solid #e5e7eb;
+}
+
+.excel-column-item--mandatory {
+  border-left-color: #ef4444;
+  background: #fef2f2;
+}
+
+.excel-column-item--optional-known {
+  border-left-color: #f59e0b;
+  background: #fefce8;
+}
+
+.excel-column-item--custom {
+  border-left-color: #10b981;
+  background: #ecfdf5;
+}
+
+.excel-column-badge {
+  font-size: 16px;
+}
+
+.excel-column-info {
+  flex: 1;
+}
+
+.excel-column-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.excel-column-detect {
+  font-size: 12px;
+  color: #6b7280;
+  margin-top: 2px;
+}
+
+.excel-column-type {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.excel-column-type.mandatory {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.excel-column-type.optional-known {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.excel-column-type.custom {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Warnings List
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.excel-warnings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.excel-warning-item {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  background: #fefce8;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #78350f;
+  line-height: 1.4;
+}
+
+.excel-warning-icon {
+  flex-shrink: 0;
+  font-weight: 600;
+}
+
+.excel-more-warnings {
+  text-align: center;
+  padding: 12px;
+  color: #6b7280;
+  font-size: 13px;
+  background: #f9fafb;
+  border-radius: 6px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Preview Table
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.excel-preview-table {
+  overflow-x: auto;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+}
+
+.excel-preview-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.excel-preview-table thead {
+  background: #f9fafb;
+  border-bottom: 2px solid #e5e7eb;
+}
+
+.excel-preview-table th {
+  padding: 12px;
+  text-align: right;
+  font-weight: 600;
+  color: #1f2937;
+  border-right: 1px solid #e5e7eb;
+}
+
+.excel-preview-table th:last-child {
+  border-right: none;
+}
+
+.excel-preview-table tbody tr {
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.excel-preview-table tbody tr:nth-child(even) {
+  background: #fafafa;
+}
+
+.excel-preview-table tbody tr:hover {
+  background: #f9fafb;
+}
+
+.excel-preview-table td {
+  padding: 12px;
+  border-right: 1px solid #e5e7eb;
+  color: #4b5563;
+}
+
+.excel-preview-table td:last-child {
+  border-right: none;
+}
+
+.excel-preview-table strong {
+  color: #1f2937;
+  font-weight: 600;
+}
+
+.excel-badge {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.excel-badge--vip {
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.excel-badge--normal {
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.excel-preview-more {
+  padding: 12px;
+  text-align: center;
+  color: #6b7280;
+  font-size: 13px;
+  background: #f9fafb;
+  border-top: 1px solid #e5e7eb;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Footer
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.excel-dialog__footer {
+  padding: 16px 24px;
+  border-top: 1px solid #e5e7eb;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  background: #f9fafb;
+}
+
+.excel-dialog__btn {
+  padding: 10px 24px;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  transition: all 0.2s;
+}
+
+.excel-dialog__btn--secondary {
+  background: white;
+  color: #6b7280;
+  border: 1px solid #d1d5db;
+}
+
+.excel-dialog__btn--secondary:hover:not(:disabled) {
+  background: #f9fafb;
+  color: #1f2937;
+}
+
+.excel-dialog__btn--primary {
+  background: #10b981;
+  color: white;
+}
+
+.excel-dialog__btn--primary:hover:not(:disabled) {
+  background: #059669;
+  transform: translateY(-2px);
+  box-shadow: 0 10px 15px rgba(16, 185, 129, 0.2);
+}
+
+.excel-dialog__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Responsive
+   ═══════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 640px) {
+  .excel-dialog {
+    width: 95%;
+    max-height: 95vh;
+  }
+
+  .excel-dialog__header {
+    padding: 16px;
+  }
+
+  .excel-dialog__content {
+    padding: 16px;
+  }
+
+  .excel-dialog__footer {
+    flex-direction: column-reverse;
+  }
+
+  .excel-dialog__btn {
+    width: 100%;
+  }
+
+  .excel-stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .excel-upload-actions {
+    flex-direction: column;
+  }
+
+  .excel-upload-btn,
+  .excel-template-btn {
+    width: 100%;
+  }
+}

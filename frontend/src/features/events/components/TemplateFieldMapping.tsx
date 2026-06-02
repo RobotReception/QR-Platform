@@ -6,7 +6,7 @@
  * - التحقق من أن جميع الحقول محددة
  */
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { templatesApi } from '../api/templatesApi'
 import { CheckCircle2, AlertCircle, Eye, EyeOff, Zap } from 'lucide-react'
@@ -29,6 +29,7 @@ interface FieldMapping {
   seat_number?: string
   barcode?: string
   qr_code?: string
+  [key: string]: string | undefined
 }
 
 interface TemplateFieldMappingProps {

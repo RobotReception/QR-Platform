@@ -71,7 +71,7 @@ Write-Host ""
 Write-Host "  Frontend:  http://localhost:5173" -ForegroundColor White
 Write-Host "  Backend:   http://localhost:8020" -ForegroundColor White
 Write-Host "  API Docs:  http://localhost:8020/docs" -ForegroundColor White
-Write-Host "  Supabase:  http://localhost:54325 (Studio)" -ForegroundColor White
+Write-Host "  Supabase:  http://localhost:54825 (Studio)" -ForegroundColor White
 Write-Host "  DB:        localhost:5434" -ForegroundColor White
 Write-Host ""
 Write-Host "Press any key to exit this window..." -ForegroundColor Gray

@@ -162,6 +162,20 @@ export function CreateInvitationDialog({ isOpen, onClose, eventId, eventTitle, e
             </div>
           </div>
 
+          {/* RSVP Toggle */}
+          <div className="dialog-field" style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '12px 0' }}>
+            <input
+              type="checkbox"
+              id="singleRequireRsvp"
+              checked={form.require_rsvp || false}
+              onChange={(e) => update({ require_rsvp: e.target.checked })}
+              style={{ width: '16px', height: '16px', accentColor: '#C9A96E' }}
+            />
+            <label htmlFor="singleRequireRsvp" style={{ margin: 0, fontSize: '0.85rem', color: '#d1d5db', cursor: 'pointer' }}>
+              طلب تأكيد الحضور (RSVP) من الضيف قبل إصدار الكود
+            </label>
+          </div>
+
           {/* Notes */}
           <div className="dialog-field">
             <label>ملاحظات</label>

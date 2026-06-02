@@ -188,6 +188,9 @@ async def generate_invitations_fast_endpoint(
         )
         await db.commit()
         
+        if not result.success:
+            raise HTTPException(400, detail=result.error_message or "فشل في توليد الدعوات")
+        
         # Prepare response
         response = FastGenerationResponse(
             success=result.success,
@@ -202,6 +205,8 @@ async def generate_invitations_fast_endpoint(
         
         return response
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Fast generation failed: {e}")
         raise HTTPException(500, f"فشل في التوليد السريع: {str(e)}")
@@ -271,6 +276,9 @@ async def generate_invitations_by_count(
         )
         await db.commit()
         
+        if not result.success:
+            raise HTTPException(400, detail=result.error_message or "فشل في توليد الدعوات")
+        
         # Prepare response
         response = FastGenerationResponse(
             success=result.success,
@@ -285,6 +293,8 @@ async def generate_invitations_by_count(
         
         return response
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Fast generation by count failed: {e}")
         raise HTTPException(500, f"فشل في التوليد السريع: {str(e)}")

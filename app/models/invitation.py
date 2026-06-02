@@ -61,6 +61,7 @@ class InvitationCreate(BaseModel):
     zone: Optional[str] = None
     notes: Optional[str] = None
     metadata: Optional[dict] = None
+    require_rsvp: Optional[bool] = False
 
 
 class QuickInviteCreate(BaseModel):
@@ -70,6 +71,7 @@ class QuickInviteCreate(BaseModel):
     count: Optional[int] = Field(None, ge=1, le=10000)
     names: Optional[list[str]] = None
     gate_id: Optional[UUID] = None
+    require_rsvp: Optional[bool] = False
 
 
 class BulkInviteFromGuests(BaseModel):
@@ -78,6 +80,7 @@ class BulkInviteFromGuests(BaseModel):
     ticket_class: str = Field("normal", pattern="^(vip|normal)$")
     template_id: Optional[UUID] = None
     gate_id: Optional[UUID] = None
+    require_rsvp: Optional[bool] = False
 
 
 class InvitationRead(BaseModel):
@@ -106,6 +109,7 @@ class InvitationRead(BaseModel):
     rsvp_status: Optional[str] = None
     rsvp_at: Optional[datetime] = None
     plus_one_count: int = 0
+    rsvp_message: Optional[str] = None
     checked_in_at: Optional[datetime] = None
     checkin_count: int = 0
     barcode_svg_url: Optional[str] = None
@@ -137,6 +141,14 @@ class InvitationUpdate(BaseModel):
     zone: Optional[str] = None
     ticket_class: Optional[str] = None
     notes: Optional[str] = None
+    status: Optional[str] = None
+    rsvp_status: Optional[str] = None
+    plus_one_count: Optional[int] = None
+    rsvp_message: Optional[str] = None
+    rsvp_at: Optional[datetime] = None
+    guest_count: Optional[int] = None
+    metadata: Optional[dict] = None
+
 
 
 class InvitationSend(BaseModel):
@@ -177,6 +189,7 @@ class CheckinResponse(BaseModel):
     ticket_class: Optional[str] = None
     event_title: Optional[str] = None
     checkin_count: int = 0
+    guest_count: int = 1
     message: str = ""
 
 

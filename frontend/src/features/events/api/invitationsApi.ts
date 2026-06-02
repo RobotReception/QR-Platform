@@ -39,6 +39,7 @@ export const DEFAULT_LAYOUT: LayoutConfig = {
 export interface FastInvitationItem {
   guest_name?: string;
   ticket_class: 'vip' | 'normal';
+  [key: string]: any;
 }
 
 export interface FastInvitationRequest {

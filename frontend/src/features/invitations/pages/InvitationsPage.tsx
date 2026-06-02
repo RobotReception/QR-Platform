@@ -49,6 +49,7 @@ export default function InvitationsPage() {
   const [showCreate, setShowCreate] = useState(false)
   const [showQuick, setShowQuick] = useState(false)
   const [showSend, setShowSend] = useState(false)
+  const [viewMode, setViewMode] = useState<'all' | 'requests'>('all')
 
   const params: InvitationListParams = {
     ...(eventFilter && { event_id: eventFilter }),
@@ -68,15 +69,19 @@ export default function InvitationsPage() {
 
   const filtered = useMemo(() => {
     if (!invitations) return []
-    if (!search.trim()) return invitations
+    let list = invitations
+    if (viewMode === 'requests') {
+      list = list.filter((inv) => inv.rsvp_status === 'pending')
+    }
+    if (!search.trim()) return list
     const q = search.toLowerCase()
-    return invitations.filter((inv) =>
+    return list.filter((inv) =>
       inv.guest_name?.toLowerCase().includes(q) ||
       inv.guest_name_ar?.includes(q) ||
       inv.guest_phone?.includes(q) ||
       inv.token?.includes(q)
     )
-  }, [invitations, search])
+  }, [invitations, search, viewMode])
 
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => {
@@ -147,6 +152,59 @@ export default function InvitationsPage() {
         </div>
       }
     >
+      {/* View Mode Tabs */}
+      <div className="inv-view-tabs" style={{ display: 'flex', gap: 16, borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '12px', marginBottom: '16px' }}>
+        <button
+          className={`tab-btn ${viewMode === 'all' ? 'active' : ''}`}
+          onClick={() => setViewMode('all')}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: viewMode === 'all' ? '#C9A96E' : '#9ca3af',
+            fontSize: '0.95rem',
+            fontWeight: 'bold',
+            cursor: 'pointer',
+            padding: '4px 12px',
+            borderBottom: viewMode === 'all' ? '2px solid #C9A96E' : 'none',
+            transition: 'all 0.2s'
+          }}
+        >
+          جميع الحضور والمدعوين
+        </button>
+        <button
+          className={`tab-btn ${viewMode === 'requests' ? 'active' : ''}`}
+          onClick={() => setViewMode('requests')}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: viewMode === 'requests' ? '#C9A96E' : '#9ca3af',
+            fontSize: '0.95rem',
+            fontWeight: 'bold',
+            cursor: 'pointer',
+            padding: '4px 12px',
+            borderBottom: viewMode === 'requests' ? '2px solid #C9A96E' : 'none',
+            transition: 'all 0.2s',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6
+          }}
+        >
+          <span>طلبات التسجيل قيد المراجعة</span>
+          {invitations?.filter((inv) => inv.rsvp_status === 'pending').length ? (
+            <span style={{
+              background: '#C9A96E',
+              color: '#0f172a',
+              fontSize: '0.72rem',
+              padding: '2px 6px',
+              borderRadius: '10px',
+              fontWeight: 800
+            }}>
+              {invitations.filter((inv) => inv.rsvp_status === 'pending').length}
+            </span>
+          ) : null}
+        </button>
+      </div>
+
       {/* ── Toolbar ── */}
       <div className="inv-toolbar">
         <div className="inv-toolbar__search">

@@ -2,8 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuthStore } from '@features/auth/store/authStore'
 import { useEventDetail } from '../hooks/useEventDetails'
-import { Upload, X, Save, Trash2, Move, QrCode, Eye, EyeOff, ArrowRight, Loader2, Type, AlignLeft, AlignCenter, AlignRight, Barcode, Database, Bold, ChevronDown } from 'lucide-react'
+import { Upload, X, Save, Trash2, Move, QrCode, Eye, EyeOff, ArrowRight, Loader2, Type, AlignLeft, AlignCenter, AlignRight, Barcode, Database, Bold, ChevronDown, Image as ImageIcon } from 'lucide-react'
 import QRCode from 'qrcode'
+import * as XLSX from 'xlsx'
 import { templatesApi, type TemplateElementCreateRequest, type TemplateElementType } from '../api/templatesApi'
 import { WorkspaceShell } from '@features/workspace/components/WorkspaceShell'
 import './events.css'
@@ -53,6 +54,12 @@ const ELEMENT_PRESETS: ElementPreset[] = [
     label: 'نص ثابت',
     icon: AlignLeft,
     defaults: { x: 0.5, y: 0.28, width: 0.4, height: 0.021, font_size: 20, font_color: '#ffffff', text_align: 'center', static_content: 'نص تجريبي' },
+  },
+  {
+    type: 'image',
+    label: 'شعار / صورة',
+    icon: ImageIcon,
+    defaults: { x: 0.5, y: 0.5, width: 0.15, height: 0.15, static_content: '' },
   },
 ]
 
@@ -229,11 +236,24 @@ const applyFontFaces = (list: { value: string }[]) => {
 export default function EventDesignEditorPage() {
   const { eventId } = useParams<{ eventId: string }>()
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
-  const editorMode: EditorMode = searchParams.get('mode') === 'excel' ? 'excel' : 'count'
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [editorMode, setEditorMode] = useState<EditorMode>(() => searchParams.get('mode') === 'excel' ? 'excel' : 'count')
   const editTemplateId = searchParams.get('edit') // If editing existing template
   const currentTenantId = useAuthStore((s) => s.currentTenantId)
   const { data: event, isLoading } = useEventDetail(currentTenantId, eventId)
+
+  const [excelColumns, setExcelColumns] = useState<string[]>(() => {
+    try {
+      const saved = sessionStorage.getItem(`excel_cols_${eventId}`)
+      return saved ? JSON.parse(saved) : []
+    } catch {
+      return []
+    }
+  })
+  const [uploadedExcelName, setUploadedExcelName] = useState<string>(() => {
+    return sessionStorage.getItem(`excel_name_${eventId}`) || ''
+  })
+  const [isManualKey, setIsManualKey] = useState(false)
 
   // Filter presets based on mode
   const availablePresets = useMemo(() =>
@@ -242,7 +262,10 @@ export default function EventDesignEditorPage() {
   )
 
   const [templateName, setTemplateName] = useState(`تصميم مخصص`)
-  const [activeTab, setActiveTab] = useState<'vip' | 'normal'>('normal')
+  const [activeTab, setActiveTab] = useState<'vip' | 'normal'>(() => {
+    const cls = searchParams.get('class')
+    return cls === 'vip' || cls === 'normal' ? cls : 'normal'
+  })
 
   // Dynamic Fonts List & Upload State
   const [fontsList, setFontsList] = useState<{ value: string; label: string }[]>([
@@ -304,10 +327,16 @@ export default function EventDesignEditorPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [localError, setLocalError] = useState<string | null>(null)
   const [isSaving, setIsSaving] = useState(false)
+  const [isUploadingAsset, setIsUploadingAsset] = useState(false)
   const [isSpacePressed, setIsSpacePressed] = useState(false)
   const [previewMode, setPreviewMode] = useState(false)
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(editTemplateId)
   const [isLoadingTemplate, setIsLoadingTemplate] = useState(!!editTemplateId)
+  const [showSaveSuccessModal, setShowSaveSuccessModal] = useState(false)
+  const [savedTemplateId, setSavedTemplateId] = useState<string | null>(null)
+  const [modalAlert, setModalAlert] = useState<{ title: string; message: string; type: 'success' | 'error' | 'info' } | null>(null)
+  const [localImageFiles, setLocalImageFiles] = useState<Record<string, File>>({})
+  void localImageFiles
 
   // Per-tab snapshots to preserve state when switching
   const tabSnapshots = useRef<Record<'vip' | 'normal', TabState | null>>({ vip: null, normal: null })
@@ -367,6 +396,10 @@ export default function EventDesignEditorPage() {
         if (cancelled) return
 
         if (elems && elems.length > 0) {
+          const hasDynamic = elems.some((e: any) => e.element_type === 'dynamic_text' || e.element_type === 'guest_name')
+          if (hasDynamic) {
+            setEditorMode('excel')
+          }
           const mapped: EditorElement[] = elems.map((e: any, i: number) => ({
             id: e.id || `elem-${i}-${Date.now()}`,
             element_type: e.element_type,
@@ -628,7 +661,14 @@ export default function EventDesignEditorPage() {
     setBackgroundFileKind(file.type === 'application/pdf' ? 'pdf' : 'image')
     setBackgroundPreview(objectUrl)
     setBackgroundTransform({ scale: 1, offsetX: 0, offsetY: 0, fitMode: 'manual' })
-    await applyBackgroundDimensions(file)
+    
+    try {
+      const tmplId = await ensureTemplateId()
+      await templatesApi.uploadBackground(tmplId, file)
+      await applyBackgroundDimensions(file)
+    } catch (err: any) {
+      setLocalError(err?.response?.data?.detail || err?.message || 'تعذر تحميل الخلفية إلى الخادم')
+    }
   }
 
   useEffect(() => {
@@ -644,51 +684,65 @@ export default function EventDesignEditorPage() {
         return
       }
 
-      if (!dragRef.current || !viewportRef.current) return
+      const drag = dragRef.current
+      if (!drag || !viewportRef.current) return
       const viewportBox = viewportRef.current?.getBoundingClientRect()
       if (!viewportBox) return
-      const target = elements.find((item) => item.id === dragRef.current?.id)
+      const target = elements.find((item) => item.id === drag.id)
       if (!target) return
 
       const clientX = (Math.min(Math.max(e.clientX, viewportBox.left), viewportBox.right) - viewportBox.left - viewTransform.panX) / viewTransform.zoom
       const clientY = (Math.min(Math.max(e.clientY, viewportBox.top), viewportBox.bottom) - viewportBox.top - viewTransform.panY) / viewTransform.zoom
-      if (dragRef.current.mode === 'move') {
-        const nextX = (clientX - dragRef.current.offsetX) / canvasWidth
-        const nextY = (clientY - dragRef.current.offsetY) / canvasHeight
+      if (drag.mode === 'move') {
+        const nextX = (clientX - drag.offsetX) / canvasWidth
+        const nextY = (clientY - drag.offsetY) / canvasHeight
 
         setElements((prev) => prev.map((item) => item.id === target.id ? {
           ...item,
-          x: Math.min(0.95, Math.max(0.05, nextX)),
-          y: Math.min(0.95, Math.max(0.05, nextY)),
+          x: Math.min(1.0 - item.width, Math.max(0.0, nextX)),
+          y: Math.min(1.0 - item.height, Math.max(0.0, nextY)),
         } : item))
         return
       }
 
-      const deltaWorldX = clientX - dragRef.current.startWorldX
-      const deltaWorldY = clientY - dragRef.current.startWorldY
+      const deltaWorldX = clientX - drag.startWorldX
+      const deltaWorldY = clientY - drag.startWorldY
       const targetIsQrCode = target.element_type === 'qr_code'
-      const nextWidthPx = dragRef.current.startWidth + deltaWorldX
-      const nextHeightPx = dragRef.current.startHeight + deltaWorldY
+      const targetIsImage = target.element_type === 'image'
+      const nextWidthPx = drag.startWidth + deltaWorldX
+      const nextHeightPx = drag.startHeight + deltaWorldY
       const nextSidePx = Math.max(40, Math.max(nextWidthPx, nextHeightPx))
 
       // Scale font size proportionally with element size
-      const widthRatio = Math.max(nextWidthPx, 30) / dragRef.current.startWidth
-      const heightRatio = Math.max(nextHeightPx, 20) / dragRef.current.startHeight
+      const widthRatio = Math.max(nextWidthPx, 30) / drag.startWidth
+      const heightRatio = Math.max(nextHeightPx, 20) / drag.startHeight
       const sizeRatio = (widthRatio + heightRatio) / 2
-      const scaledFontSize = !targetIsQrCode
-        ? Math.round(Math.max(8, Math.min(120, dragRef.current.startFontSize * sizeRatio)))
+      const scaledFontSize = (!targetIsQrCode && !targetIsImage)
+        ? Math.round(Math.max(8, Math.min(120, drag.startFontSize * sizeRatio)))
         : undefined
 
-      setElements((prev) => prev.map((item) => item.id === target.id ? {
-        ...item,
-        width: targetIsQrCode
-          ? Math.min(0.95, Math.max(0.05, nextSidePx / canvasWidth))
-          : Math.min(0.95, Math.max(0.05, nextWidthPx / canvasWidth)),
-        height: targetIsQrCode
-          ? Math.min(0.95, Math.max(0.05, nextSidePx / canvasHeight))
-          : Math.min(0.95, Math.max(0.05, nextHeightPx / canvasHeight)),
-        ...(scaledFontSize !== undefined ? { font_size: scaledFontSize } : {}),
-      } : item))
+      setElements((prev) => prev.map((item) => {
+        if (item.id !== target.id) return item
+        
+        let w = nextWidthPx
+        let h = nextHeightPx
+        if (targetIsImage) {
+          const startRatio = drag.startWidth / drag.startHeight
+          w = Math.max(20, nextWidthPx)
+          h = w / startRatio
+        }
+        
+        return {
+          ...item,
+          width: targetIsQrCode
+            ? Math.min(1.0, Math.max(0.05, nextSidePx / canvasWidth))
+            : Math.min(1.0, Math.max(0.05, w / canvasWidth)),
+          height: targetIsQrCode
+            ? Math.min(1.0, Math.max(0.05, nextSidePx / canvasHeight))
+            : Math.min(1.0, Math.max(0.05, h / canvasHeight)),
+          ...(scaledFontSize !== undefined ? { font_size: scaledFontSize } : {}),
+        }
+      }))
     }
 
     const handleMouseUp = () => {
@@ -730,10 +784,9 @@ export default function EventDesignEditorPage() {
     if (selectedId === id) setSelectedId(null)
   }
 
-  const updateSelected = (patch: Partial<EditorElement>) => {
-    if (!selectedElement) return
+  const updateElementById = (id: string, patch: Partial<EditorElement>) => {
     setElements((prev) => prev.map((item) => {
-      if (item.id !== selectedElement.id) return item
+      if (item.id !== id) return item
       if (item.element_type !== 'qr_code') return { ...item, ...patch }
 
       const hasWidth = typeof patch.width === 'number'
@@ -745,6 +798,11 @@ export default function EventDesignEditorPage() {
         : (patch.height ?? item.height) * canvasHeight
       return normalizeQrElementBox({ ...item, ...patch }, canvasWidth, canvasHeight, sidePx)
     }))
+  }
+
+  const updateSelected = (patch: Partial<EditorElement>) => {
+    if (!selectedElement) return
+    updateElementById(selectedElement.id, patch)
   }
 
   const handleFontUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -789,12 +847,20 @@ export default function EventDesignEditorPage() {
         
         // Auto-select the uploaded font for active element
         updateSelected({ font_family: fontFamily })
-        alert(`تم رفع وتفعيل الخط بنجاح: ${fontFamily}`)
+        setModalAlert({
+          title: 'نجاح تفعيل الخط',
+          message: `تم رفع وتفعيل الخط بنجاح: ${fontFamily}`,
+          type: 'success'
+        })
       }
     } catch (err: any) {
       console.error('Failed to upload font:', err)
       const errorMsg = err.response?.data?.detail || 'فشل رفع ملف الخط. تأكد أنه ملف .ttf أو .otf صالح.'
-      alert(errorMsg)
+      setModalAlert({
+        title: 'فشل رفع الخط',
+        message: errorMsg,
+        type: 'error'
+      })
     } finally {
       setIsUploadingFont(false)
       e.target.value = ''
@@ -821,45 +887,53 @@ export default function EventDesignEditorPage() {
     setSelectedId(duplicate.id)
   }
 
+  const ensureTemplateId = async (): Promise<string> => {
+    if (editingTemplateId) return editingTemplateId
+
+    const tmpl = await templatesApi.create({
+      event_id: event!.id,
+      name: templateName.trim() || `${event!.title} - ${activeTab === 'vip' ? 'VIP' : 'عادي'}`,
+      template_type: 'designed',
+      ticket_class: activeTab,
+      width_px: canvasWidth,
+      height_px: canvasHeight,
+      orientation: 'portrait',
+      background_color: '#ffffff',
+      metadata: {
+        source: 'event-design-editor',
+        page_mode: autoPageMode,
+        page_preset: pagePreset,
+        background_transform: backgroundTransform,
+      },
+    })
+    
+    setEditingTemplateId(tmpl.id)
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      next.set('edit', tmpl.id)
+      return next
+    })
+    return tmpl.id
+  }
+
   const saveOneTab = async (
-    tc: 'vip' | 'normal',
+    _tc: 'vip' | 'normal',
     tName: string,
     bgFile: File | null,
     els: EditorElement[],
     cw: number,
     ch: number,
     bgTransform: BackgroundTransform,
-    existingTemplateId?: string | null,
+    _existingTemplateId?: string | null,
   ) => {
-    let tmplId: string
+    const tmplId = await ensureTemplateId()
 
-    if (existingTemplateId) {
-      // Update existing template
-      await import('@services/http/client').then(async (m) => {
-        await m.default.patch(`/templates/${existingTemplateId}`, {
-          name: tName.trim(),
-          width_px: cw,
-          height_px: ch,
-          metadata: {
-            source: 'event-design-editor',
-            page_mode: autoPageMode,
-            page_preset: pagePreset,
-            background_transform: bgTransform,
-          },
-        })
-      })
-      tmplId = existingTemplateId
-    } else {
-      // Create new template
-      const tmpl = await templatesApi.create({
-        event_id: event!.id,
+    // Update existing template fields
+    await import('@services/http/client').then(async (m) => {
+      await m.default.patch(`/templates/${tmplId}`, {
         name: tName.trim(),
-        template_type: 'designed',
-        ticket_class: tc,
         width_px: cw,
         height_px: ch,
-        orientation: 'portrait',
-        background_color: '#ffffff',
         metadata: {
           source: 'event-design-editor',
           page_mode: autoPageMode,
@@ -867,20 +941,72 @@ export default function EventDesignEditorPage() {
           background_transform: bgTransform,
         },
       })
-      tmplId = tmpl.id
-    }
+    })
 
     if (bgFile) {
       await templatesApi.uploadBackground(tmplId, bgFile)
     }
-    const normalizedElements = els.map((element) => {
+
+    const finalElements = els.map((element) => {
       const { id: _id, ...rest } = element
       if (rest.element_type !== 'qr_code') return rest
-
       return normalizeQrElementBox(rest, cw, ch)
     })
-    await templatesApi.replaceElements(tmplId, normalizedElements)
-    return tmplId
+
+    const savedElements = await templatesApi.replaceElements(tmplId, finalElements)
+    return { tmplId, savedElements }
+  }
+
+  const downloadCustomExcelTemplate = () => {
+    // Gather custom fields from elements
+    const customKeys = new Set<string>()
+    elements.forEach((el) => {
+      if (el.element_type === 'dynamic_text' || el.element_type === 'guest_name') {
+        if (el.data_key && el.data_key.trim()) {
+          const dk = el.data_key.trim()
+          // Exclude guest name and standard columns that match our base three
+          if (!['اسم الضيف', 'guest_name', 'name', 'guest.name', 'عدد الدعوات', 'عدد الأشخاص', 'invitation_count', 'count', 'نوع التذكرة', 'ticket_class', 'class'].includes(dk)) {
+            customKeys.add(dk)
+          }
+        }
+      }
+    })
+
+    // Base columns
+    const baseHeaders = ['اسم الضيف', 'عدد الدعوات', 'نوع التذكرة']
+    const allHeaders = [...baseHeaders, ...Array.from(customKeys)]
+
+    // Create dummy row data
+    const dummyRow: Record<string, any> = {
+      'اسم الضيف': 'محمد عبدالله العمري',
+      'عدد الدعوات': 1,
+      'نوع التذكرة': activeTab === 'vip' ? 'VIP' : 'normal'
+    }
+    customKeys.forEach((key) => {
+      dummyRow[key] = `بيانات ${key}`
+    })
+
+    const workbook = XLSX.utils.book_new()
+    const worksheet = XLSX.utils.json_to_sheet([dummyRow], { header: allHeaders })
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'المدعوين')
+
+    // Guide tab to explain
+    const guideRows = [
+      { 'العمود': 'اسم الضيف', 'النوع': 'نص (إلزامي)', 'الوصف': 'الاسم الكامل للضيف المطبوع على البطاقة' },
+      { 'العمود': 'عدد الدعوات', 'النوع': 'رقم (اختياري)', 'الوصف': 'عدد البطاقات المطلوب توليدها لهذا الضيف (الافتراضي 1)' },
+      { 'العمود': 'نوع التذكرة', 'النوع': 'VIP أو normal (اختياري)', 'الوصف': 'فئة التذكرة الخاصة بالضيف (VIP أو عادي)' },
+    ]
+    customKeys.forEach((key) => {
+      guideRows.push({
+        'العمود': key,
+        'النوع': 'نص (حسب التصميم)',
+        'الوصف': `الحقل المخصص المربوط بـ "${key}" في التصميم الخاص بك`
+      })
+    })
+    const guideWorksheet = XLSX.utils.json_to_sheet(guideRows)
+    XLSX.utils.book_append_sheet(workbook, guideWorksheet, 'دليل تعبئة الحقول')
+
+    XLSX.writeFile(workbook, `نموذج_دعوات_${templateName.replace(/\s+/g, '_')}.xlsx`)
   }
 
   const handleSave = async () => {
@@ -903,7 +1029,7 @@ export default function EventDesignEditorPage() {
     setIsSaving(true)
     setLocalError(null)
     try {
-      const savedId = await saveOneTab(
+      const { tmplId, savedElements } = await saveOneTab(
         activeTab,
         templateName,
         backgroundFile,
@@ -914,12 +1040,50 @@ export default function EventDesignEditorPage() {
         editingTemplateId,
       )
 
-      if (editingTemplateId) {
-        // When editing, go back to templates tab
-        navigate(`/events/${event.id}?tab=templates`)
-      } else {
-        navigate(`/events/${event.id}?tab=invitations&source=design&templateId=${savedId}&ticketClass=${activeTab}`)
-      }
+      // Update state so we don't have stale/blob URLs and old IDs
+      setEditingTemplateId(tmplId)
+      setElements(savedElements.map((e, i) => ({
+        id: e.id,
+        element_type: e.element_type,
+        label: e.label || e.element_type,
+        data_key: e.data_key || null,
+        x: Number(e.x),
+        y: Number(e.y),
+        width: Number(e.width),
+        height: Number(e.height),
+        rotation: Number(e.rotation ?? 0),
+        font_family: e.font_family || 'Cairo',
+        font_size: e.font_size ?? 20,
+        font_weight: e.font_weight || 'normal',
+        font_color: e.font_color || '#374151',
+        text_align: e.text_align || 'center',
+        text_direction: e.text_direction || 'rtl',
+        line_height: e.line_height ?? 1.4,
+        letter_spacing: 0,
+        qr_size: e.qr_size ?? 200,
+        qr_color: e.qr_color || '#000000',
+        qr_bg_color: e.qr_bg_color || '#FFFFFF',
+        qr_error_level: e.qr_error_level || 'M',
+        static_content: e.static_content || '',
+        is_visible: e.is_visible ?? true,
+        z_index: e.z_index ?? i,
+        sort_order: e.sort_order ?? i,
+        slot_index: e.slot_index,
+      })))
+
+      // Clear the uploaded files cache since they are now stored on the server
+      setLocalImageFiles({})
+
+      // Update search params in URL so reload maintains the edit state
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev)
+        next.set('edit', tmplId)
+        return next
+      })
+
+      setSavedTemplateId(tmplId)
+      setShowSaveSuccessModal(true)
+      setIsSaving(false)
     } catch (err: any) {
       setLocalError(err.response?.data?.detail || err.message || 'تعذر حفظ القالب')
       setIsSaving(false)
@@ -954,13 +1118,13 @@ export default function EventDesignEditorPage() {
       hideSidebar
       actions={
         <div className="header-actions">
-            <button className="btn btn-ghost" onClick={() => navigate(editingTemplateId ? `/events/${event.id}?tab=templates` : `/events/${event.id}?tab=invitations&source=design`)} disabled={isSaving}>
+            <button className="btn btn-ghost" onClick={() => navigate(editingTemplateId ? `/events/${event.id}?tab=templates` : `/events/${event.id}?tab=invitations&source=design`)} disabled={isSaving || isUploadingAsset}>
                 <ArrowRight size={16} style={{ marginLeft: 6 }} />
                 {editingTemplateId ? 'إلغاء والعودة' : 'إلغاء والعودة'}
             </button>
-            <button className="btn btn-primary" onClick={handleSave} disabled={isSaving}>
+            <button className="btn btn-primary" onClick={handleSave} disabled={isSaving || isUploadingAsset}>
                 <Save size={16} />
-                {isSaving ? 'جاري الحفظ...' : editingTemplateId ? 'حفظ التعديلات' : 'حفظ التصميم'}
+                {isSaving ? 'جاري الحفظ...' : isUploadingAsset ? 'جاري رفع الشعار...' : editingTemplateId ? 'حفظ التعديلات' : 'حفظ التصميم'}
             </button>
         </div>
       }
@@ -996,7 +1160,7 @@ export default function EventDesignEditorPage() {
 
 
 
-          <label className="inv-label">خلفية التصميم</label>
+          <label className="inv-label" style={{ marginTop: 16 }}>🎨 خلفية التصميم</label>
           <label className="inv-upload-btn inv-design-upload">
             <Upload size={15} /> رفع صورة أو PDF للتصميم
             <input
@@ -1013,9 +1177,60 @@ export default function EventDesignEditorPage() {
             </div>
           )}
 
+          <label className="inv-label" style={{ marginTop: 16 }}>📂 استيراد أعمدة الإكسل (لتسهيل الربط)</label>
+          <label className="inv-upload-btn inv-design-upload" style={{ background: 'rgba(16, 185, 129, 0.08)', color: '#34d399', borderColor: 'rgba(16, 185, 129, 0.2)' }}>
+            <Upload size={15} /> {uploadedExcelName ? `تغيير ملف الأعمدة: ${uploadedExcelName}` : 'تحميل أسماء الأعمدة من ملف Excel'}
+            <input
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              hidden
+              onChange={async (e) => {
+                const file = e.target.files?.[0]
+                if (!file) return
+                try {
+                  const arrayBuffer = await file.arrayBuffer()
+                  const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: true, cellNF: true })
+                  const worksheet = workbook.Sheets[workbook.SheetNames[0]]
+                  const data = XLSX.utils.sheet_to_json<Record<string, any>>(worksheet)
+                  if (data.length > 0) {
+                    const cols = Object.keys(data[0])
+                    setExcelColumns(cols)
+                    setUploadedExcelName(file.name)
+                    setIsManualKey(false)
+                    sessionStorage.setItem(`excel_cols_${eventId}`, JSON.stringify(cols))
+                    sessionStorage.setItem(`excel_name_${eventId}`, file.name)
+                    setModalAlert({
+                      title: 'تم قراءة الملف بنجاح',
+                      message: `تم قراءة ${cols.length} أعمدة بنجاح من ملف ${file.name}`,
+                      type: 'success'
+                    })
+                  } else {
+                    setModalAlert({
+                      title: 'ملف فارغ',
+                      message: 'ملف Excel فارغ أو لا يحتوي على صفوف بيانات',
+                      type: 'error'
+                    })
+                  }
+                } catch (err: any) {
+                  setModalAlert({
+                    title: 'خطأ في قراءة الملف',
+                    message: `خطأ في قراءة ملف الإكسل: ${err.message}`,
+                    type: 'error'
+                  })
+                }
+              }}
+              disabled={isSaving}
+            />
+          </label>
+          {uploadedExcelName && (
+            <div className="inv-design-preview-note" style={{ color: '#34d399', background: 'rgba(16, 185, 129, 0.04)', borderColor: 'rgba(16, 185, 129, 0.18)', borderStyle: 'dashed', borderWidth: '1px', marginTop: '8px' }}>
+              ✓ تم تحميل {excelColumns.length} أعمدة من: {uploadedExcelName}
+            </div>
+          )}
 
 
-          <label className="inv-label" style={{ marginTop: 8 }}>إضافة عناصر</label>
+
+          <label className="inv-label" style={{ marginTop: 16 }}>➕ إضافة عنصر جديد للبطاقة</label>
           <div className="inv-design-toolbar">
             {availablePresets.map((preset) => {
               const Icon = preset.icon
@@ -1028,13 +1243,13 @@ export default function EventDesignEditorPage() {
           </div>
           {editorMode === 'count' && (
             <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4, opacity: 0.7 }}>
-              وضع العدد — باركودات فقط. لإضافة نصوص اختر وضع Excel.
+              وضع العدد السريع (باركود فقط بدون نصوص أسماء). لتفعيل النصوص والأسماء، يرجى التبديل لوضع استيراد الإكسل.
             </div>
           )}
 
           <div className="inv-design-layers">
             <div className="inv-design-layers__head">
-              <strong>العناصر والطبقات</strong>
+              <strong>العناصر المضافة على البطاقة</strong>
             </div>
             <div className="inv-design-layers__list">
               {elements.map((el) => (
@@ -1128,19 +1343,19 @@ export default function EventDesignEditorPage() {
               {elements.map((element) => {
               const isSelected = element.id === selectedId
               const isQrCode = element.element_type === 'qr_code'
+              const isImage = element.element_type === 'image'
               const showQrPreview = isQrCode && qrPreviewVisible
               return (
                 <button
                   key={element.id}
                   type="button"
                   draggable={false}
-                  className={`inv-design-element ${isQrCode ? 'inv-design-element--barcode' : 'inv-design-element--text'} ${isSelected && !previewMode ? 'inv-design-element--selected' : ''}`}
+                  className={`inv-design-element ${isQrCode ? 'inv-design-element--barcode' : isImage ? 'inv-design-element--image' : 'inv-design-element--text'} ${isSelected && !previewMode ? 'inv-design-element--selected' : ''}`}
                   style={{
                     left: `${element.x * 100}%`,
                     top: `${element.y * 100}%`,
                     width: `${element.width * 100}%`,
-                    height: isQrCode ? 'auto' : 'auto',
-                    aspectRatio: isQrCode ? '1 / 1' : undefined,
+                    height: (isQrCode || isImage) ? `${element.height * 100}%` : 'auto',
                     pointerEvents: previewMode ? 'none' : undefined,
                   }}
                   onMouseDown={(e) => {
@@ -1178,6 +1393,17 @@ export default function EventDesignEditorPage() {
                         ) : null}
                       </span>
                     </>
+                  ) : isImage ? (
+                    <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', border: element.static_content ? 'none' : '1px dashed rgba(255,255,255,0.3)', background: element.static_content ? 'transparent' : 'rgba(0,0,0,0.2)', borderRadius: 4 }}>
+                      {element.static_content ? (
+                        <img src={element.static_content} alt={element.label || 'Logo'} style={{ width: '100%', height: '100%', objectFit: 'contain' }} draggable={false} />
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, color: 'rgba(255,255,255,0.6)', fontSize: 10 }}>
+                          <ImageIcon size={18} />
+                          <span>شعار / صورة</span>
+                        </div>
+                      )}
+                    </div>
                   ) : (
                     <div className="inv-design-element__text-preview" style={{
                       fontFamily: `'${element.font_family || 'Cairo'}', 'Cairo', 'Noto Sans Arabic', sans-serif`,
@@ -1272,36 +1498,105 @@ export default function EventDesignEditorPage() {
                 </div>
               </div>
 
-              {/* Dynamic text element: data_key field */}
-              {selectedElement.element_type === 'dynamic_text' && (
+              {/* Dynamic text / Guest name elements: data_key selector */}
+              {(selectedElement.element_type === 'dynamic_text' || selectedElement.element_type === 'guest_name') && (
                 <div style={{ marginBottom: 10 }}>
-                  <label className="inv-label">مفتاح البيانات (data_key)</label>
-                  <input
-                    className="inv-input"
-                    placeholder="مثال: guest.name أو اسم الضيف"
-                    value={selectedElement.data_key || ''}
-                    onChange={(e) => updateSelected({ data_key: e.target.value })}
-                    disabled={isSaving}
-                  />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <label className="inv-label" style={{ marginBottom: 0 }}>
+                      {selectedElement.element_type === 'guest_name' ? 'عمود اسم الضيف في Excel' : 'ربط الحقل بعمود البيانات (data_key)'}
+                    </label>
+                    {(excelColumns.length > 0 || uploadedExcelName) && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        style={{ fontSize: 10, padding: '2px 6px', height: 'auto', color: 'var(--color-primary)' }}
+                        onClick={() => setIsManualKey(p => !p)}
+                      >
+                        {isManualKey ? '📋 اختيار من القائمة' : '✍️ كتابة يدوية'}
+                      </button>
+                    )}
+                  </div>
+
+                  {!isManualKey && (excelColumns.length > 0) ? (
+                    <div className="inv-design-select-wrap">
+                      <select
+                        className="inv-input inv-design-select"
+                        value={selectedElement.data_key || ''}
+                        onChange={(e) => {
+                          const val = e.target.value
+                          if (val === '__manual__') {
+                            setIsManualKey(true)
+                          } else {
+                            updateSelected({ data_key: val })
+                          }
+                        }}
+                        disabled={isSaving}
+                      >
+                        <option value="">-- اختر عموداً من ملف Excel --</option>
+                        {excelColumns.map((col) => (
+                          <option key={col} value={col}>
+                            {col}
+                          </option>
+                        ))}
+                        <option value="__manual__">-- ✍️ كتابة مفتاح مخصص يدوياً --</option>
+                      </select>
+                      <ChevronDown size={14} className="inv-design-select-icon" />
+                    </div>
+                  ) : (
+                    <div>
+                      <input
+                        className="inv-input"
+                        placeholder="مثال: اسم الضيف أو guest.name"
+                        value={selectedElement.data_key || ''}
+                        onChange={(e) => updateSelected({ data_key: e.target.value })}
+                        disabled={isSaving}
+                      />
+                      {excelColumns.length === 0 && (
+                        <div style={{ display: 'flex', gap: 4, marginTop: 6, flexWrap: 'wrap' }}>
+                          {['guest.name', 'custom.seat', 'custom.table', 'custom.hall'].map((key) => (
+                            <button
+                              key={key}
+                              type="button"
+                              className="btn btn-ghost"
+                              style={{ fontSize: 9, padding: '2px 6px', height: 'auto', background: 'rgba(0,0,0,0.05)' }}
+                              onClick={() => updateSelected({ data_key: key })}
+                            >
+                              {key}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   <span style={{ fontSize: 10, color: 'var(--color-text-muted)', marginTop: 4, display: 'block' }}>
-                    اكتب اسم العمود من Excel أو مسار البيانات (مثل: guest.name، custom.seat، الشركة)
+                    {excelColumns.length > 0 
+                      ? `تم تحميل أعمدة ملفك: "${uploadedExcelName}". اختر العمود المراد طباعة بياناته في هذا الموضع.`
+                      : 'اكتب اسم العمود كما هو في ملف الأكسل، أو ارفع ملفك في القائمة الجانبية لقراءته تلقائياً.'}
                   </span>
                 </div>
               )}
 
-              {/* Guest name / legacy text element: column name */}
-              {selectedElement.element_type === 'guest_name' && editorMode === 'excel' && (
+              {/* Field formatting for dynamic text */}
+              {selectedElement.element_type === 'dynamic_text' && (
                 <div style={{ marginBottom: 10 }}>
-                  <label className="inv-label">اسم العمود في Excel</label>
-                  <input
-                    className="inv-input"
-                    placeholder="مثال: اسم الضيف"
-                    value={selectedElement.data_key || ''}
-                    onChange={(e) => updateSelected({ data_key: e.target.value })}
-                    disabled={isSaving}
-                  />
+                  <label className="inv-label">تنسيق الحقل (نوع البيانات)</label>
+                  <div className="inv-design-select-wrap">
+                    <select
+                      className="inv-input inv-design-select"
+                      value={selectedElement.static_content || 'text'}
+                      onChange={(e) => updateSelected({ static_content: e.target.value })}
+                      disabled={isSaving}
+                    >
+                      <option value="text">نص عادي (عام)</option>
+                      <option value="date">تاريخ (تنسيق تاريخ YYYY-MM-DD)</option>
+                      <option value="time">وقت (تنسيق وقت HH:MM)</option>
+                      <option value="number">رقم</option>
+                    </select>
+                    <ChevronDown size={14} className="inv-design-select-icon" />
+                  </div>
                   <span style={{ fontSize: 10, color: 'var(--color-text-muted)', marginTop: 4, display: 'block' }}>
-                    اكتب اسم العمود كما يظهر في ملف Excel (مثل: اسم الضيف، التاريخ، الشركة)
+                    اختر نوع التنسيق ليتم عرض وعرض البيانات بالنمط الصحيح عند توليد البطاقات.
                   </span>
                 </div>
               )}
@@ -1357,8 +1652,154 @@ export default function EventDesignEditorPage() {
                 </div>
               )}
 
+              {/* Image upload controls for logo/image elements */}
+              {selectedElement.element_type === 'image' && (
+                <div style={{ marginBottom: 10 }}>
+                  <label className="inv-label">صورة الشعار / التصميم</label>
+                  
+                  {selectedElement.static_content ? (
+                    <div style={{ marginBottom: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <div style={{ width: '100%', height: 100, borderRadius: 6, overflow: 'hidden', background: '#1f2937', border: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <img src={selectedElement.static_content} alt="Preview" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        style={{ width: '100%', border: '1px dashed rgba(255,255,255,0.2)', fontSize: 12, height: 32, gap: 4 }}
+                        onClick={() => {
+                          const input = document.createElement('input')
+                          input.type = 'file'
+                          input.accept = 'image/*'
+                          const elementId = selectedElement.id
+                          const elementWidth = selectedElement.width
+                          input.onchange = async (e) => {
+                            const file = (e.target as HTMLInputElement).files?.[0]
+                            if (file) {
+                              const previewUrl = URL.createObjectURL(file)
+                              setIsUploadingAsset(true)
+                              
+                              try {
+                                const img = new Image()
+                                img.onload = () => {
+                                  const ratio = img.naturalWidth / img.naturalHeight
+                                  const currentWidthPx = elementWidth * canvasWidth
+                                  const nextHeightPx = currentWidthPx / ratio
+                                  updateElementById(elementId, {
+                                    static_content: previewUrl,
+                                    height: nextHeightPx / canvasHeight
+                                  })
+                                }
+                                img.src = previewUrl
+
+                                const tmplId = await ensureTemplateId()
+                                const uploadedAsset = await templatesApi.uploadAsset(tmplId, file, 'logo')
+                                
+                                updateElementById(elementId, {
+                                  static_content: uploadedAsset.file_url
+                                })
+                              } catch (err) {
+                                console.error('Failed to upload image asset:', err)
+                                setModalAlert({
+                                  title: 'خطأ في الرفع',
+                                  message: 'فشل رفع الشعار إلى الخادم. يرجى المحاولة مرة أخرى.',
+                                  type: 'error'
+                                })
+                              } finally {
+                                setIsUploadingAsset(false)
+                              }
+                            }
+                          }
+                          input.click()
+                        }}
+                        disabled={isSaving || isUploadingAsset}
+                      >
+                        <Upload size={14} /> تغيير الصورة
+                      </button>
+                    </div>
+                  ) : (
+                    <label className="inv-upload-btn inv-design-upload" style={{ display: 'flex', justifyContent: 'center', height: 60, alignItems: 'center', cursor: isSaving || isUploadingAsset ? 'not-allowed' : 'pointer', opacity: isSaving || isUploadingAsset ? 0.6 : 1 }}>
+                      <Upload size={16} style={{ marginLeft: 6 }} /> رفع ملف الصورة
+                      <input
+                        type="file"
+                        accept="image/*"
+                        hidden
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0]
+                          if (file) {
+                            const previewUrl = URL.createObjectURL(file)
+                            const elementId = selectedElement.id
+                            const elementWidth = selectedElement.width
+                            setIsUploadingAsset(true)
+                            
+                            try {
+                              const img = new Image()
+                              img.onload = () => {
+                                const ratio = img.naturalWidth / img.naturalHeight
+                                const currentWidthPx = elementWidth * canvasWidth
+                                const nextHeightPx = currentWidthPx / ratio
+                                updateElementById(elementId, {
+                                  static_content: previewUrl,
+                                  height: nextHeightPx / canvasHeight
+                                })
+                              }
+                              img.src = previewUrl
+
+                              const tmplId = await ensureTemplateId()
+                              const uploadedAsset = await templatesApi.uploadAsset(tmplId, file, 'logo')
+                              
+                              updateElementById(elementId, {
+                                static_content: uploadedAsset.file_url
+                              })
+                            } catch (err) {
+                              console.error('Failed to upload image asset:', err)
+                              setModalAlert({
+                                  title: 'خطأ في الرفع',
+                                  message: 'فشل رفع الشعار إلى الخادم. يرجى المحاولة مرة أخرى.',
+                                  type: 'error'
+                              })
+                            } finally {
+                              setIsUploadingAsset(false)
+                            }
+                          }
+                        }}
+                        disabled={isSaving || isUploadingAsset}
+                      />
+                    </label>
+                  )}
+
+                  <div style={{ marginTop: 8 }}>
+                    <label className="inv-label" style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>أو أدخل رابط الصورة مباشرة</label>
+                    <input
+                      className="inv-input"
+                      placeholder="رابط الصورة (URL)"
+                      value={selectedElement.static_content?.startsWith('blob:') ? '' : selectedElement.static_content || ''}
+                      onChange={(e) => {
+                        const val = e.target.value
+                        const elementId = selectedElement.id
+                        const elementWidth = selectedElement.width
+                        updateElementById(elementId, { static_content: val })
+                        if (val && (val.startsWith('http://') || val.startsWith('https://') || val.startsWith('data:'))) {
+                          const img = new Image()
+                          img.onload = () => {
+                            const ratio = img.naturalWidth / img.naturalHeight
+                            const currentWidthPx = elementWidth * canvasWidth
+                            const nextHeightPx = currentWidthPx / ratio
+                            updateElementById(elementId, {
+                              static_content: val,
+                              height: nextHeightPx / canvasHeight
+                            })
+                          }
+                          img.src = val
+                        }
+                      }}
+                      disabled={isSaving || isUploadingAsset}
+                    />
+                  </div>
+                </div>
+              )}
+
               {/* ═══ Typography Controls (text elements only) ═══ */}
-              {selectedElement.element_type !== 'qr_code' && selectedElement.element_type !== 'barcode' && (
+              {selectedElement.element_type !== 'qr_code' && selectedElement.element_type !== 'barcode' && selectedElement.element_type !== 'image' && (
                 <>
                   {/* Font Family */}
                   <div style={{ marginBottom: 10 }}>
@@ -1547,6 +1988,112 @@ export default function EventDesignEditorPage() {
           {localError && <div className="inv-toast inv-toast--error" style={{ marginTop: 'auto' }}><X size={16} /> {localError}</div>}
         </aside>
       </div>
+
+      {showSaveSuccessModal && (
+        <div className="inv-quick-modal-overlay" role="dialog" aria-modal="true">
+          <div className="inv-quick-modal" style={{ width: '460px', padding: '24px' }}>
+            <div className="inv-quick-modal__header">
+              <div>
+                <h3 style={{ fontSize: '20px', fontWeight: 'bold', color: '#10b981', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '24px' }}>✓</span> تم حفظ التصميم بنجاح!
+                </h3>
+                <p style={{ marginTop: '8px', fontSize: '13px', lineHeight: '1.6', color: 'rgba(255,255,255,0.7)' }}>
+                  تم حفظ قالب البطاقة "{templateName}". يمكنك الآن تحميل ملف Excel المخصص لهذا التصميم والذي يحتوي على كافة الحقول المخصصة التي قمت بإضافتها لملئها ورفعها لاحقاً.
+                </p>
+              </div>
+            </div>
+            
+            <div className="inv-quick-modal__body" style={{ marginTop: '16px', gap: '12px' }}>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => {
+                  downloadCustomExcelTemplate()
+                }}
+                style={{
+                  width: '100%',
+                  background: '#10b981',
+                  borderColor: '#10b981',
+                  color: '#fff',
+                  justifyContent: 'center',
+                  padding: '12px',
+                  fontWeight: '600',
+                  gap: '8px',
+                  display: 'flex',
+                  alignItems: 'center'
+                }}
+              >
+                <Upload size={16} style={{ transform: 'rotate(180deg)' }} />
+                تنزيل نموذج Excel المخصص للتصميم
+              </button>
+              
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => {
+                  setShowSaveSuccessModal(false)
+                  if (editingTemplateId) {
+                    navigate(`/events/${event.id}?tab=templates`)
+                  } else {
+                    navigate(`/events/${event.id}?tab=invitations&source=design&templateId=${savedTemplateId || editingTemplateId}&ticketClass=${activeTab}`)
+                  }
+                }}
+                style={{
+                  width: '100%',
+                  justifyContent: 'center',
+                  padding: '12px',
+                  borderColor: 'rgba(255,255,255,0.1)',
+                  color: 'rgba(255,255,255,0.8)'
+                }}
+              >
+                متابعة لإصدار الدعوات
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {modalAlert && (
+        <div className="inv-quick-modal-overlay" role="dialog" aria-modal="true" style={{ zIndex: 11000 }}>
+          <div className="inv-quick-modal" style={{ width: '400px', padding: '20px' }}>
+            <div className="inv-quick-modal__header" style={{ marginBottom: '12px' }}>
+              <div>
+                <h3 style={{
+                  fontSize: '18px',
+                  fontWeight: 'bold',
+                  color: modalAlert.type === 'success' ? '#10b981' : modalAlert.type === 'error' ? '#ef4444' : '#3b82f6',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px'
+                }}>
+                  {modalAlert.type === 'success' ? '✓' : modalAlert.type === 'error' ? '⚠' : 'ℹ'} {modalAlert.title}
+                </h3>
+              </div>
+            </div>
+            <div className="inv-quick-modal__body" style={{ fontSize: '13px', color: 'rgba(255, 255, 255, 0.7)', lineHeight: '1.6', marginBottom: '16px' }}>
+              {modalAlert.message}
+            </div>
+            <div className="inv-quick-modal__actions" style={{ marginTop: '12px' }}>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => setModalAlert(null)}
+                style={{
+                  width: '100%',
+                  justifyContent: 'center',
+                  background: modalAlert.type === 'success' ? '#10b981' : modalAlert.type === 'error' ? '#ef4444' : 'var(--color-primary)',
+                  borderColor: modalAlert.type === 'success' ? '#10b981' : modalAlert.type === 'error' ? '#ef4444' : 'var(--color-primary)',
+                  color: '#fff',
+                  padding: '10px',
+                  fontWeight: '600'
+                }}
+              >
+                موافق
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </WorkspaceShell>
   )
 }

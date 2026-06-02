@@ -14,7 +14,8 @@ from typing import Optional
 
 from app.auth import get_current_user, get_tenant_id_from_header, CurrentUser
 from app.database import get_db, AsyncSessionLocal
-from app.models.batch import BatchCreate, BatchRead, BatchItemRead, BatchSummary
+from pydantic import BaseModel, Field
+from app.models.batch import BatchCreate, BatchRead, BatchItemRead, BatchSummary, LayoutConfig
 from app.services.permission_service import require_permission
 from app.services.audit_service import log_audit
 from app.services import batch_pipeline, storage_service
@@ -529,3 +530,202 @@ async def batch_stats(
             "preview_urls": batch_row.get("result_preview_urls", []),
         },
     }
+
+
+# ══════════════════════════════════════════════
+# CREATE AND START DESIGNED BATCH FAST (SINGLE REQUEST)
+# ══════════════════════════════════════════════
+
+class BatchGenerateDesignedFast(BaseModel):
+    event_id: UUID
+    template_id: UUID
+    ticket_class: str = "normal"
+    invitations: list[dict] = Field(..., min_items=1, max_items=1000, description="List of guest invitation objects")
+    layout: LayoutConfig = Field(default_factory=LayoutConfig)
+    output_formats: list[str] = Field(default=["pdf", "zip"])
+    barcode_format: str = "qr"
+    metadata: Optional[dict] = None
+
+@router.post("/generate-designed-fast", response_model=BatchRead, status_code=201)
+async def generate_designed_fast(
+    body: BatchGenerateDesignedFast,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Create all invitations and start designed generation batch in a single optimized request.
+    """
+    tenant_id = get_tenant_id_from_header(request)
+    await require_permission(db, tenant_id, user.id, "invitations.create")
+    await require_permission(db, tenant_id, user.id, "batches.create")
+
+    # Validate event exists
+    event_check = await db.execute(
+        text("SELECT id FROM events WHERE id = :eid AND tenant_id = :tid"),
+        {"eid": str(body.event_id), "tid": str(tenant_id)},
+    )
+    if not event_check.first():
+        raise HTTPException(404, "الحدث غير موجود")
+
+    # Validate template exists
+    template = await db.execute(
+        text("""
+            SELECT id, ticket_class, template_type
+            FROM invite_templates
+            WHERE id = :tid AND tenant_id = :tenant_id
+              AND (event_id = :eid OR event_id IS NULL)
+        """),
+        {
+            "tid": str(body.template_id),
+            "tenant_id": str(tenant_id),
+            "eid": str(body.event_id),
+        },
+    )
+    template_row = template.mappings().first()
+    if not template_row:
+        raise HTTPException(404, "القالب غير موجود")
+    if template_row["ticket_class"] != body.ticket_class:
+        raise HTTPException(400, "نوع القالب لا يطابق نوع الدفعة")
+    if template_row["template_type"] != "designed":
+        raise HTTPException(400, "يجب اختيار قالب تصميم")
+
+    # Check quota
+    total_invitations = len(body.invitations)
+    quota_result = await db.execute(
+        text("""
+            SELECT
+                CASE WHEN CAST(:tc AS ticket_class) = 'vip'::ticket_class
+                     THEN e.vip_quota ELSE e.normal_quota END AS quota,
+                COUNT(i.id) FILTER (
+                    WHERE i.ticket_class = CAST(:tc AS ticket_class)
+                      AND i.status NOT IN ('revoked','expired')
+                ) AS used
+            FROM events e
+            LEFT JOIN invitations i ON i.event_id = e.id
+            WHERE e.id = :eid AND e.tenant_id = :tid
+            GROUP BY e.id
+        """),
+        {"eid": str(body.event_id), "tid": str(tenant_id), "tc": body.ticket_class},
+    )
+    quota_row = quota_result.mappings().first()
+    if not quota_row:
+        raise HTTPException(404, "الحدث غير موجود")
+    if quota_row["quota"] > 0 and (quota_row["used"] + total_invitations) > quota_row["quota"]:
+        raise HTTPException(
+            400,
+            f"تم الوصول للحد الأقصى لدعوات {body.ticket_class} "
+            f"({quota_row['quota']}). المستخدم: {quota_row['used']}, المطلوب: {total_invitations}"
+        )
+
+    # Batch insert invitations
+    values_parts = []
+    params = {
+        "tid": str(tenant_id),
+        "eid": str(body.event_id),
+        "tmpl": str(body.template_id),
+        "tc": body.ticket_class,
+        "uid": str(user.id),
+    }
+    
+    import json
+    for idx, inv_data in enumerate(body.invitations):
+        name = inv_data.get("guest_name") or f"Guest {idx + 1}"
+        count = inv_data.get("guest_count") or 1
+        meta = inv_data.get("metadata") or {}
+        
+        # Determine status and rsvp_status based on require_rsvp
+        require_rsvp = meta.get("require_rsvp", False)
+        meta["require_rsvp"] = require_rsvp
+        
+        status_val = "created"
+        rsvp_status_val = "pending"
+        if not require_rsvp:
+            status_val = "accepted"
+            rsvp_status_val = "accepted"
+        
+        name_key = f"name_{idx}"
+        count_key = f"count_{idx}"
+        meta_key = f"meta_{idx}"
+        status_key = f"status_{idx}"
+        rsvp_status_key = f"rsvp_status_{idx}"
+        
+        params[name_key] = name
+        params[count_key] = count
+        params[meta_key] = json.dumps(meta, default=str)
+        params[status_key] = status_val
+        params[rsvp_status_key] = rsvp_status_val
+        
+        values_parts.append(
+            f"(:tid, :eid, :tmpl, CAST(:tc AS ticket_class), :{name_key}, :{count_key}, CAST(:{meta_key} AS jsonb), :uid, :{status_key}, :{rsvp_status_key}, now(), now())"
+        )
+    
+    insert_sql = f"""
+        INSERT INTO invitations (
+            tenant_id, event_id, template_id, ticket_class,
+            guest_name, guest_count, metadata, created_by, status, rsvp_status, created_at, updated_at
+        ) VALUES {', '.join(values_parts)}
+        RETURNING id
+    """
+    
+    result = await db.execute(text(insert_sql), params)
+    invitation_ids = [str(r[0]) for r in result.fetchall()]
+
+    if not invitation_ids:
+        raise HTTPException(400, "لم يتم إنشاء أي دعوات")
+
+    # Create batch
+    layout_json = json.dumps(body.layout.model_dump(), default=str)
+
+    batch_result = await db.execute(
+        text("""
+            INSERT INTO generation_batches (
+                tenant_id, event_id, template_id, mode, ticket_class,
+                count_total, layout_json, output_formats, barcode_format,
+                status, created_by, metadata
+            ) VALUES (
+                :tid, :eid, :tmpl, 'designed', :tc,
+                :count, CAST(:layout AS jsonb), :formats, :bf,
+                'draft', :uid, CAST(:meta AS jsonb)
+            )
+            RETURNING *
+        """),
+        {
+            "tid": str(tenant_id), "eid": str(body.event_id),
+            "tmpl": str(body.template_id),
+            "tc": body.ticket_class,
+            "count": len(invitation_ids),
+            "layout": layout_json,
+            "formats": body.output_formats,
+            "bf": body.barcode_format,
+            "uid": str(user.id),
+            "meta": json.dumps(body.metadata or {}, default=str),
+        },
+    )
+    batch_row = batch_result.mappings().first()
+    batch_id = batch_row["id"]
+
+    # Create batch items
+    for inv_id in invitation_ids:
+        await db.execute(
+            text("INSERT INTO batch_items (batch_id, invitation_id) VALUES (:bid, :iid)"),
+            {"bid": str(batch_id), "iid": inv_id},
+        )
+
+    # Queue the batch
+    await db.execute(
+        text("UPDATE generation_batches SET status = 'queued', error_message = NULL, progress = 0, updated_at = now() WHERE id = :id"),
+        {"id": str(batch_id)},
+    )
+    await db.commit()
+
+    # Dispatch to pipeline asynchronously
+    _dispatch_pipeline(str(batch_id), background_tasks)
+
+    # Re-fetch full batch details to match Pydantic model
+    full_batch = await db.execute(
+        text("SELECT * FROM generation_batches WHERE id = :id"),
+        {"id": str(batch_id)}
+    )
+    return BatchRead(**dict(full_batch.mappings().first()))

@@ -54,6 +54,7 @@ export interface BatchRead {
   error_message: string | null
   result_pdf_url: string | null
   result_zip_url: string | null
+  duration_ms?: number
   created_at: string
   updated_at: string
 }
@@ -67,4 +68,23 @@ export const batchesApi = {
 
   get: (batchId: string) =>
     http.get<BatchRead>(`/batches/${batchId}`).then((r) => r.data),
+
+  generateDesignedFast: (data: {
+    event_id: string
+    template_id: string
+    ticket_class: 'vip' | 'normal'
+    invitations: Array<{
+      guest_name: string
+      guest_count: number
+      metadata: {
+        imported_from: string
+        custom_fields: Record<string, string>
+      }
+    }>
+    layout: BatchLayoutConfig
+    output_formats?: string[]
+    barcode_format?: string
+    metadata?: Record<string, any>
+  }) =>
+    http.post<BatchRead>('/batches/generate-designed-fast', data).then((r) => r.data),
 }

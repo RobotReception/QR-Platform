@@ -20,6 +20,13 @@ import {
 import * as XLSX from 'xlsx'
 import './template-selection-flow.css'
 import './invitation-type-selection.css'
+import { 
+  getCleanFieldLabel, 
+  resolveGuestName, 
+  resolveGuestCount, 
+  resolveTicketClass,
+  formatCellValue
+} from '../utils/mappingUtils'
 
 interface TemplateSelectionFlowProps {
   eventId: string
@@ -90,6 +97,8 @@ export function TemplateSelectionFlow({ eventId, onComplete, onCancel }: Templat
 
   // Dynamic fields extracted from template elements
   const [dynamicFields, setDynamicFields] = useState<DynamicField[]>(BUILTIN_FIELDS)
+  const [templateElements, setTemplateElements] = useState<any[]>([])
+  const [hoveredFieldKey, setHoveredFieldKey] = useState<string | null>(null)
 
   const tenantId = useAuthStore((s) => s.currentTenantId)
 
@@ -99,6 +108,8 @@ export function TemplateSelectionFlow({ eventId, onComplete, onCancel }: Templat
     queryFn: () => templatesApi.list(eventId),
     enabled: !!tenantId,
   })
+
+  const selectedTemplate = allTemplates.find((t) => t.id === selectedTemplateId)
 
   // تصفية القوالب حسب النوع المختار
   const templates = invitationType
@@ -127,12 +138,14 @@ export function TemplateSelectionFlow({ eventId, onComplete, onCancel }: Templat
   useEffect(() => {
     if (!selectedTemplateId) {
       setDynamicFields(BUILTIN_FIELDS)
+      setTemplateElements([])
       return
     }
 
     let cancelled = false
     templatesApi.getElements(selectedTemplateId).then((elements) => {
       if (cancelled) return
+      setTemplateElements(elements)
 
       // Extract dynamic fields from template elements
       const fields: DynamicField[] = []
@@ -145,7 +158,7 @@ export function TemplateSelectionFlow({ eventId, onComplete, onCancel }: Templat
             seenKeys.add(key)
             fields.push({
               data_key: key,
-              label: el.label || 'اسم الضيف',
+              label: getCleanFieldLabel(key, el.element_type, el.label),
               element_type: el.element_type,
               required: true,
             })
@@ -155,7 +168,7 @@ export function TemplateSelectionFlow({ eventId, onComplete, onCancel }: Templat
             seenKeys.add(el.data_key)
             fields.push({
               data_key: el.data_key,
-              label: el.label || el.data_key,
+              label: getCleanFieldLabel(el.data_key, el.element_type, el.label),
               element_type: el.element_type,
               required: false,
             })
@@ -166,7 +179,7 @@ export function TemplateSelectionFlow({ eventId, onComplete, onCancel }: Templat
             seenKeys.add(key)
             fields.push({
               data_key: key,
-              label: el.label || el.element_type,
+              label: getCleanFieldLabel(key, el.element_type, el.label),
               element_type: el.element_type,
               required: false,
             })
@@ -174,15 +187,11 @@ export function TemplateSelectionFlow({ eventId, onComplete, onCancel }: Templat
         }
       }
 
-      // Ensure at least guest.name is included
-      if (!seenKeys.has('guest.name') && !fields.some((f) => f.element_type === 'guest_name')) {
-        fields.unshift(BUILTIN_FIELDS[0])
-      }
-
       setDynamicFields(fields.length > 0 ? fields : BUILTIN_FIELDS)
     }).catch(() => {
       if (!cancelled) {
         setDynamicFields(BUILTIN_FIELDS)
+        setTemplateElements([])
       }
     })
 
@@ -235,7 +244,7 @@ export function TemplateSelectionFlow({ eventId, onComplete, onCancel }: Templat
       setUploadedFile(file)
 
       const arrayBuffer = await file.arrayBuffer()
-      const workbook = XLSX.read(arrayBuffer, { type: 'array' })
+      const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: true, cellNF: true })
       const worksheet = workbook.Sheets[workbook.SheetNames[0]]
       const data = XLSX.utils.sheet_to_json<Record<string, string>>(worksheet)
 
@@ -348,7 +357,7 @@ export function TemplateSelectionFlow({ eventId, onComplete, onCancel }: Templat
       const result: Record<string, string> = {}
       for (const field of dynamicFields) {
         const colName = columnMapping[field.data_key]
-        result[field.data_key] = colName ? (row[colName] || '') : ''
+        result[field.data_key] = colName ? formatCellValue(row[colName]) : ''
       }
       return result
     })
@@ -360,21 +369,30 @@ export function TemplateSelectionFlow({ eventId, onComplete, onCancel }: Templat
       return
     }
 
-    const guests = excelRows.map((row) => {
-      const mapped: Record<string, string> & { guest_name: string } = { guest_name: '' }
-      for (const field of dynamicFields) {
-        const colName = columnMapping[field.data_key]
-        const value = colName ? (row[colName] || '') : ''
-        // Put in the mapped result with the data_key
-        mapped[field.data_key] = value
-        // Also keep backward compatibility for guest_name
-        if (field.data_key === 'guest.name') {
-          mapped.guest_name = value
+    const guestNameCol = columnMapping['guest.name']
+
+    const guests = excelRows
+      .filter((row) => {
+        // Filter rows by the current batch ticket class (invitationType)
+        const rowTicketClass = resolveTicketClass(row, invitationType)
+        return rowTicketClass === invitationType
+      })
+      .map((row) => {
+        const mapped: Record<string, any> & { guest_name: string; guest_count: number } = { 
+          guest_name: resolveGuestName(row, guestNameCol),
+          guest_count: resolveGuestCount(row)
         }
-      }
-      // Include all raw row data as well
-      return { ...row, ...mapped }
-    })
+        
+        // Map actual dynamic design fields
+        for (const field of dynamicFields) {
+          if (field.data_key !== 'guest.name') {
+            const colName = columnMapping[field.data_key]
+            mapped[field.data_key] = colName ? formatCellValue(row[colName]) : ''
+          }
+        }
+        
+        return { ...row, ...mapped }
+      })
 
     onComplete({
       invitationType,
@@ -594,7 +612,7 @@ export function TemplateSelectionFlow({ eventId, onComplete, onCancel }: Templat
           <div className="flow-step mapping-step">
             <div className="step-title">تعيين الأعمدة</div>
             <p className="step-description">
-              تم الكشف عن {dynamicFields.length} حقل من التصميم. تحقق من تعيين الأعمدة تلقائياً أو عدّلها.
+              قم بربط حقول التصميم بأعمدة ملف الـ Excel المرفوع.
             </p>
 
             {mappingErrors.length > 0 && (
@@ -608,34 +626,151 @@ export function TemplateSelectionFlow({ eventId, onComplete, onCancel }: Templat
               </div>
             )}
 
-            <div className="mapping-container">
-              {dynamicFields.map((field) => (
-                <div key={field.data_key} className="mapping-item">
-                  <label className="mapping-label">
-                    {field.label}
-                    {field.required && <span style={{ color: '#ef4444', marginRight: 4 }}>*</span>}
-                    {columnMapping[field.data_key] && <CheckCircle2 size={16} className="check-icon" />}
-                  </label>
-                  <span style={{ fontSize: 10, color: 'var(--color-text-muted)', direction: 'ltr', fontFamily: 'var(--font-en)' }}>
-                    {field.data_key}
-                  </span>
-                  <select
-                    value={columnMapping[field.data_key] || ''}
-                    onChange={(e) => handleMappingChange(field.data_key, e.target.value)}
-                    className="mapping-select"
-                  >
-                    <option value="">-- اختر عمود --</option>
-                    {excelColumns.map((col) => (
-                      <option key={col.name} value={col.name}>
-                        {col.name} {col.sampleValues[0] ? `(مثال: ${col.sampleValues[0]})` : ''}
-                      </option>
-                    ))}
-                  </select>
+            <div className="mapping-step-content">
+              {/* Form panel */}
+              <div className="mapping-fields-panel">
+                <div className="mapping-container-vertical">
+                  {dynamicFields.map((field) => {
+                    const isHovered = hoveredFieldKey === field.data_key
+                    const mappedCol = columnMapping[field.data_key]
+                    const sampleVal = mappedCol ? excelRows[0]?.[mappedCol] : null
+
+                    return (
+                      <div 
+                        key={field.data_key} 
+                        className={`mapping-item-card ${isHovered ? 'mapping-item-card--hovered' : ''} ${mappedCol ? 'mapping-item-card--mapped' : ''} ${field.required && !mappedCol ? 'mapping-item-card--required-error' : ''}`}
+                        onMouseEnter={() => setHoveredFieldKey(field.data_key)}
+                        onMouseLeave={() => setHoveredFieldKey(null)}
+                      >
+                        <div className="mapping-item-card-header">
+                          <label className="mapping-item-card-label">
+                            {field.label}
+                            {field.required && <span className="mapping-item-badge mapping-item-badge--required">إلزامي للكرت</span>}
+                            {!field.required && <span className="mapping-item-badge mapping-item-badge--optional">اختياري</span>}
+                          </label>
+                          {mappedCol && <CheckCircle2 size={15} className="check-icon" />}
+                        </div>
+                        <span className="mapping-item-card-key">مفتاح الربط: {field.data_key}</span>
+
+                        <select
+                          value={mappedCol || ''}
+                          onChange={(e) => handleMappingChange(field.data_key, e.target.value)}
+                          className="mapping-item-card-select"
+                        >
+                          <option value="">— اختر عمود البيانات —</option>
+                          {excelColumns.map((col) => (
+                            <option key={col.name} value={col.name}>
+                              {col.name} {col.sampleValues[0] ? `(${col.sampleValues[0]})` : ''}
+                            </option>
+                          ))}
+                        </select>
+
+                        {sampleVal && (
+                          <div className="mapping-item-card-preview">
+                            <span className="preview-label-text">القيمة الأولى للمعاينة:</span>
+                            <span className="preview-value-text">{sampleVal}</span>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
-              ))}
+              </div>
+
+              {/* Live Preview panel */}
+              <div className="mapping-preview-panel">
+                <div className="preview-panel-title">معاينة كرت الدعوة التفاعلية</div>
+                <div className="preview-panel-subtitle">مرر الماوس فوق أي حقل لرؤية موقعه على التصميم</div>
+
+                {selectedTemplate && (
+                  <div 
+                    className="card-preview-container"
+                    style={{
+                      aspectRatio: selectedTemplate.orientation === 'landscape' || (selectedTemplate.width_px || 1080) > (selectedTemplate.height_px || 1920) 
+                        ? '1.414 / 1' 
+                        : '1 / 1.414',
+                      backgroundColor: selectedTemplate.background_color || '#111827',
+                      backgroundImage: selectedTemplate.background_url ? `url(${selectedTemplate.background_url})` : 'none',
+                    }}
+                  >
+                    {/* Render design overlay elements */}
+                    {templateElements
+                      .filter(el => el.is_visible !== false)
+                      .map((el) => {
+                        const isDynamic = el.element_type === 'guest_name' || el.element_type === 'dynamic_text' || ['event_date', 'event_time', 'event_location', 'seat_number', 'gate', 'hall', 'table_number'].includes(el.element_type)
+                        
+                        const key = el.data_key || (el.element_type === 'guest_name' ? 'guest.name' : `custom.${el.element_type}`)
+                        const mappedCol = columnMapping[key]
+                        
+                        let displayText = ''
+                        if (el.element_type === 'qr_code' || el.element_type === 'barcode') {
+                          displayText = el.element_type === 'qr_code' ? 'QR Code' : 'Barcode'
+                        } else if (isDynamic) {
+                          if (mappedCol) {
+                            displayText = formatCellValue(excelRows[0]?.[mappedCol]) || el.label || key
+                          } else {
+                            displayText = `{${getCleanFieldLabel(key, el.element_type, el.label)}}`
+                          }
+                        } else {
+                          displayText = el.static_content || el.label || ''
+                        }
+
+                        const isActive = hoveredFieldKey === key
+
+                        return (
+                          <div
+                            key={el.id}
+                            className={`card-preview-element ${isDynamic ? 'card-preview-element--dynamic' : ''} ${mappedCol ? 'card-preview-element--mapped' : ''} ${isActive ? 'card-preview-element--active' : ''} ${el.element_type === 'qr_code' || el.element_type === 'barcode' ? 'card-preview-element--qr' : ''}`}
+                            style={{
+                              left: `${el.x * 100}%`,
+                              top: `${el.y * 100}%`,
+                              width: `${el.width * 100}%`,
+                              height: `${el.height * 100}%`,
+                              transform: `rotate(${el.rotation || 0}deg)`,
+                              fontFamily: el.font_family || 'Cairo',
+                              fontSize: `${Math.max(7, (el.font_size || 14) * 0.16)}px`,
+                              color: el.font_color || '#ffffff',
+                              fontWeight: el.font_weight || 'normal',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: el.text_align === 'left' ? 'flex-start' : el.text_align === 'right' ? 'flex-end' : 'center',
+                              textAlign: el.text_align as any || 'center',
+                              pointerEvents: isDynamic ? 'auto' : 'none',
+                            }}
+                            onMouseEnter={() => isDynamic && setHoveredFieldKey(key)}
+                            onMouseLeave={() => isDynamic && setHoveredFieldKey(null)}
+                          >
+                            {el.element_type === 'qr_code' && (
+                              <div className="preview-qr-box">
+                                <span>QR</span>
+                              </div>
+                            )}
+                            {el.element_type === 'barcode' && (
+                              <div className="preview-barcode-box">
+                                <span>||||</span>
+                              </div>
+                            )}
+                            {el.element_type === 'image' && (
+                              <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                                {el.static_content ? (
+                                  <img src={el.static_content} alt="Logo" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                                ) : (
+                                  <div style={{ fontSize: '9px', opacity: 0.6 }}>Image</div>
+                                )}
+                              </div>
+                            )}
+                            {el.element_type !== 'qr_code' && el.element_type !== 'barcode' && el.element_type !== 'image' && (
+                              <span className="truncate-text">{displayText}</span>
+                            )}
+                          </div>
+                        )
+                      })}
+                  </div>
+                )}
+              </div>
             </div>
 
-            <div className="step-actions">
+            <div className="step-actions" style={{ marginTop: 24 }}>
               <button className="btn btn-secondary" onClick={() => setCurrentStep('upload')}>
                 <ChevronLeft size={16} />
                 رجوع

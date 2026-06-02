@@ -36,6 +36,9 @@ TENANT_EXEMPT_PATHS = {
     "/api/v1/webhooks/stripe",
     "/api/v1/tenants",
     "/api/v1/platform",
+    "/api/v1/invitations/view/",
+    "/api/v1/invitations/rsvp/",
+    "/api/v1/public/events/",
 }
 
 # Subdomains to ignore

@@ -103,7 +103,7 @@ export function EventTemplatesTab({ eventId, isActiveTab }: EventTemplatesTabPro
             إدارة القوالب المخصصة للدعوات - إضافة، معاينة، وحذف
           </p>
         </div>
-        <button className="btn btn-primary">
+        <button className="btn btn-primary" onClick={() => navigate(`/events/${eventId}/design?mode=excel`)}>
           <Plus size={16} />
           قالب جديد
         </button>
@@ -115,7 +115,7 @@ export function EventTemplatesTab({ eventId, isActiveTab }: EventTemplatesTabPro
           <AlertCircle size={48} />
           <h3>لا توجد قوالب</h3>
           <p>أنشئ قالب جديد لبدء تخصيص دعوات الحدث</p>
-          <button className="btn btn-primary">
+          <button className="btn btn-primary" onClick={() => navigate(`/events/${eventId}/design?mode=excel`)}>
             <Plus size={16} />
             إنشاء قالب جديد
           </button>

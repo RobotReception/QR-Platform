@@ -55,14 +55,16 @@ async def scan_checkin(
     checkin_result = row["result"]
     invitation_id = row["invitation_id"]
 
+    inv_info_result = await db.execute(
+        text("SELECT event_id, guest_count FROM invitations WHERE id = :id"),
+        {"id": str(invitation_id)},
+    )
+    inv_info_row = inv_info_result.first()
+    guest_count = inv_info_row[1] if inv_info_row else 1
+
     event_id_for_log = body.event_id
-    if not event_id_for_log:
-        event_result = await db.execute(
-            text("SELECT event_id FROM invitations WHERE id = :id"),
-            {"id": str(invitation_id)},
-        )
-        event_row = event_result.first()
-        event_id_for_log = event_row[0] if event_row else None
+    if not event_id_for_log and inv_info_row:
+        event_id_for_log = inv_info_row[0]
 
     if event_id_for_log:
         await db.execute(
@@ -102,6 +104,7 @@ async def scan_checkin(
         ticket_class=row.get("ticket_class"),
         event_title=row.get("event_title"),
         checkin_count=row.get("checkin_count", 0),
+        guest_count=guest_count,
         message=CHECKIN_MESSAGES.get(checkin_result, ""),
     )
 

@@ -146,7 +146,7 @@ export function EventBarcodesTab({ event, stats, onlyHistory = false }: Props) {
 
     try {
       const buffer = await file.arrayBuffer()
-      const workbook = XLSX.read(buffer, { type: 'array' })
+      const workbook = XLSX.read(buffer, { type: 'array', cellDates: true, cellNF: true })
       const firstSheet = workbook.Sheets[workbook.SheetNames[0]]
       const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet, { defval: '' })
 
@@ -514,7 +514,7 @@ export function EventBarcodesTab({ event, stats, onlyHistory = false }: Props) {
                                 <th>رمز</th>
                                 <th>الضيف</th>
                                 <th>جهة اتصال</th>
-                                <th>التوكن</th>
+                                <th>رابط الدعوة</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -537,8 +537,27 @@ export function EventBarcodesTab({ event, stats, onlyHistory = false }: Props) {
                                   <td>
                                     {inv.token ? (
                                       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                                        <span className="inv-op-row__sub" style={{ fontFamily: 'var(--font-en)' }}>{inv.token}</span>
-                                        <button className="inv-dl-btn" onClick={() => { navigator.clipboard?.writeText(inv.token ?? '') }} title="نسخ التوكن"><Copy size={14} /> نسخ</button>
+                                        <button
+                                          className="inv-dl-btn"
+                                          onClick={() => {
+                                            const url = `${window.location.origin}/i/${inv.token}`
+                                            navigator.clipboard?.writeText(url)
+                                            alert('تم نسخ رابط الدعوة بنجاح!')
+                                          }}
+                                          title="نسخ رابط الدعوة"
+                                        >
+                                          <Copy size={13} /> نسخ الرابط
+                                        </button>
+                                        <a
+                                          href={`/i/${inv.token}`}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="inv-dl-btn"
+                                          title="عرض الدعوة"
+                                          style={{ textDecoration: 'none' }}
+                                        >
+                                          <Eye size={13} /> عرض
+                                        </a>
                                       </div>
                                     ) : '—'}
                                   </td>

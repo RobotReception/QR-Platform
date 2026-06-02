@@ -19,6 +19,9 @@ export const useGenerateInvitations = () => {
       queryClient.invalidateQueries({
         queryKey: ['fast-generation-history', variables.event_id],
       })
+      queryClient.invalidateQueries({
+        queryKey: ['invitations'],
+      })
     },
   })
 }

@@ -1,5 +1,6 @@
 import { X, QrCode, User, Phone, Mail, MapPin, Sparkles, Copy, ExternalLink } from 'lucide-react'
 import { Invitation, STATUS_LABELS, STATUS_COLORS } from '../types'
+import { useUpdateInvitation } from '../hooks/useInvitations'
 
 interface Props {
   invitation: Invitation | null
@@ -7,6 +8,7 @@ interface Props {
 }
 
 export function InvitationDetailPanel({ invitation: inv, onClose }: Props) {
+  const updateMutation = useUpdateInvitation()
   if (!inv) return null
 
   const statusColor = STATUS_COLORS[inv.status] || '#64748b'
@@ -15,6 +17,46 @@ export function InvitationDetailPanel({ invitation: inv, onClose }: Props) {
 
   const copyLink = () => {
     navigator.clipboard.writeText(publicUrl)
+  }
+
+  const handleApprove = () => {
+    if (!inv) return
+    updateMutation.mutate({
+      id: inv.id,
+      data: {
+        status: 'accepted',
+        rsvp_status: 'accepted'
+      }
+    }, {
+      onSuccess: () => {
+        alert('تم قبول طلب التسجيل وتوليد الباركود وتذكرة الدخول بنجاح')
+        onClose()
+      },
+      onError: (err: any) => {
+        alert(`فشل قبول الطلب: ${err.message || err}`)
+      }
+    })
+  }
+
+  const handleDecline = () => {
+    if (!inv) return
+    if (confirm('هل أنت متأكد من رفض هذا الطلب؟')) {
+      updateMutation.mutate({
+        id: inv.id,
+        data: {
+          status: 'declined',
+          rsvp_status: 'declined'
+        }
+      }, {
+        onSuccess: () => {
+          alert('تم رفض طلب التسجيل')
+          onClose()
+        },
+        onError: (err: any) => {
+          alert(`فشل رفض الطلب: ${err.message || err}`)
+        }
+      })
+    }
   }
 
   return (
@@ -85,6 +127,24 @@ export function InvitationDetailPanel({ invitation: inv, onClose }: Props) {
           </div>
         </div>
 
+        {/* Custom Field Answers */}
+        {inv.metadata?.custom_fields && Object.keys(inv.metadata.custom_fields).length > 0 && (
+          <div className="inv-detail-section">
+            <h4>إجابات أسئلة التسجيل</h4>
+            <div className="inv-detail-grid">
+              {Object.entries(inv.metadata.custom_fields).map(([label, val]) => {
+                const displayVal = Array.isArray(val) ? val.join(', ') : String(val)
+                return (
+                  <div key={label} className="inv-detail-item" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
+                    <span style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: 600 }}>{label}</span>
+                    <span style={{ fontSize: '0.85rem', color: '#e2e8f0', background: 'rgba(255,255,255,0.02)', padding: '6px 10px', borderRadius: '6px', width: '100%', border: '1px solid rgba(255,255,255,0.04)' }}>{displayVal}</span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Seating */}
         {(inv.seat_number || inv.table_number || inv.hall || inv.zone) && (
           <div className="inv-detail-section">
@@ -147,6 +207,28 @@ export function InvitationDetailPanel({ invitation: inv, onClose }: Props) {
           <div className="inv-detail-section">
             <h4>ملاحظات</h4>
             <p className="inv-detail-notes">{inv.notes}</p>
+          </div>
+        )}
+
+        {/* Approval Actions */}
+        {inv.rsvp_status === 'pending' && (
+          <div className="inv-detail-section" style={{ display: 'flex', gap: 8, marginTop: 12, borderTop: '1px solid rgba(255, 255, 255, 0.08)', paddingTop: 16 }}>
+            <button
+              onClick={handleApprove}
+              disabled={updateMutation.isPending}
+              className="btn btn-primary"
+              style={{ flex: 1, padding: '10px', fontSize: '0.85rem', background: 'linear-gradient(135deg, #C9A96E 0%, #b08b47 100%)', border: 'none', color: '#0f172a', fontWeight: 'bold' }}
+            >
+              {updateMutation.isPending ? 'جاري القبول...' : 'قبول وإصدار تذكرة'}
+            </button>
+            <button
+              onClick={handleDecline}
+              disabled={updateMutation.isPending}
+              className="btn btn-ghost"
+              style={{ padding: '10px', fontSize: '0.85rem', border: '1px solid #ef4444', color: '#ef4444', background: 'transparent' }}
+            >
+              رفض
+            </button>
           </div>
         )}
       </aside>

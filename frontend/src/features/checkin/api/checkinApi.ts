@@ -19,6 +19,7 @@ export interface CheckinResponse {
   ticket_class: string | null
   event_title: string | null
   checkin_count: number
+  guest_count: number
   message: string
 }
 

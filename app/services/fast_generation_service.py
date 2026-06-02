@@ -276,6 +276,19 @@ async def _create_invitations_batch(
         zone_key = f"zone_{idx}"
         notes_key = f"notes_{idx}"
         metadata_key = f"metadata_{idx}"
+        status_key = f"status_{idx}"
+        rsvp_status_key = f"rsvp_status_{idx}"
+
+        meta = normalized.get("metadata") or {}
+        # Ensure require_rsvp is stored in metadata if not present
+        require_rsvp = meta.get("require_rsvp", False)
+        meta["require_rsvp"] = require_rsvp
+
+        status_val = "created"
+        rsvp_status_val = "pending"
+        if not require_rsvp:
+            status_val = "accepted"
+            rsvp_status_val = "accepted"
 
         params[ticket_class_key] = normalized.get("ticket_class")
         params[guest_name_key] = normalized.get("guest_name")
@@ -289,13 +302,15 @@ async def _create_invitations_batch(
         params[hall_key] = normalized.get("hall")
         params[zone_key] = normalized.get("zone")
         params[notes_key] = normalized.get("notes")
-        params[metadata_key] = json.dumps(normalized.get("metadata") or {}, default=str)
+        params[metadata_key] = json.dumps(meta, default=str)
+        params[status_key] = status_val
+        params[rsvp_status_key] = rsvp_status_val
 
         values_list.append(
             f"(:tenant_id, :event_id, CAST(:{ticket_class_key} AS ticket_class), "
             f":{guest_name_key}, :{guest_count_key}, :{guest_name_ar_key}, :{guest_phone_key}, :{guest_whatsapp_key}, :{guest_email_key}, "
             f":{seat_number_key}, :{table_number_key}, :{hall_key}, :{zone_key}, :{notes_key}, "
-            f"CAST(:{metadata_key} AS jsonb), now(), now())"
+            f"CAST(:{metadata_key} AS jsonb), :{status_key}, :{rsvp_status_key}, now(), now())"
         )
     
     insert_query = f"""
@@ -303,7 +318,7 @@ async def _create_invitations_batch(
             tenant_id, event_id, ticket_class,
             guest_name, guest_count, guest_name_ar, guest_phone, guest_whatsapp, guest_email,
             seat_number, table_number, hall, zone, notes,
-            metadata, created_at, updated_at
+            metadata, status, rsvp_status, created_at, updated_at
         ) VALUES {','.join(values_list)}
         RETURNING id, tenant_id, event_id, token, guest_name, ticket_class, metadata
     """

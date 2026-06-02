@@ -10,8 +10,8 @@ async def main():
         res = await conn.execute(text("SELECT id, name, width_px, height_px FROM invite_templates ORDER BY created_at DESC LIMIT 10"))
         for tmpl in res.mappings():
             print('Template:', tmpl)
-            res2 = await conn.execute(text("SELECT element_type, width, height, x, y FROM template_elements WHERE template_id = :tid"), {'tid': tmpl['id']})
+            res2 = await conn.execute(text("SELECT element_type, static_content, label, data_key, width, height, x, y FROM template_elements WHERE template_id = :tid"), {'tid': tmpl['id']})
             for row in res2.mappings():
-                print('  Element:', row)
+                print('  Element:', dict(row))
 
 asyncio.run(main())

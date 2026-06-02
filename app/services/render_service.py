@@ -16,6 +16,7 @@ import os
 from typing import Optional
 from PIL import Image, ImageDraw, ImageFont
 import arabic_reshaper
+import arabic_reshaper.letters as reshaper_letters
 from bidi.algorithm import get_display
 
 from app.services.barcode_service import generate_qr_png, generate_code128_png
@@ -128,13 +129,31 @@ def _get_font(family: str = "Cairo", size: float = 24, weight: str = "normal") -
     return font
 
 
+# Build a translation mapping from isolated presentation forms to their unshaped equivalents.
+# This prevents modern web fonts (like Cairo/Tajawal) that lack glyph mappings for the
+# Unicode isolated presentation forms block from rendering them as tofu boxes.
+_ISOLATED_TO_STANDARD = {}
+for _unshaped, _forms in reshaper_letters.LETTERS_ARABIC.items():
+    _isolated = _forms[reshaper_letters.ISOLATED]
+    if _isolated:
+        _ISOLATED_TO_STANDARD[_isolated] = _unshaped
+
+if hasattr(reshaper_letters, 'LETTERS_ARABIC_V2'):
+    for _unshaped, _forms in reshaper_letters.LETTERS_ARABIC_V2.items():
+        _isolated = _forms[reshaper_letters.ISOLATED]
+        if _isolated:
+            _ISOLATED_TO_STANDARD[_isolated] = _unshaped
+
+
 def _reshape_arabic(text: str) -> str:
     """Reshape Arabic text for proper display (connected letters + RTL)."""
     if not text:
         return ""
     try:
         reshaped = arabic_reshaper.reshape(text)
-        return get_display(reshaped)
+        bidi_text = get_display(reshaped)
+        # Clean up isolated forms to avoid tofu boxes in modern web fonts
+        return "".join(_ISOLATED_TO_STANDARD.get(char, char) for char in bidi_text)
     except Exception:
         return text
 
@@ -430,6 +449,75 @@ def _to_float(value, default: float = 0.0) -> float:
         return default
 
 
+def _format_value_by_type(value: str, format_type: str) -> str:
+    import datetime
+    if not value:
+        return ""
+    
+    value_str = str(value).strip()
+    
+    if format_type == "date":
+        # Format date
+        for fmt in (
+            "%Y-%m-%dT%H:%M:%S.%f%z",
+            "%Y-%m-%dT%H:%M:%S%z",
+            "%Y-%m-%dT%H:%M:%S.%f",
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%d",
+        ):
+            try:
+                clean_val = value_str
+                if clean_val.endswith("Z"):
+                    clean_val = clean_val[:-1] + "+00:00"
+                dt = datetime.datetime.strptime(clean_val, fmt)
+                return dt.strftime("%Y-%m-%d")
+            except Exception:
+                continue
+        # Try to parse as Excel date serial number if it's purely numeric
+        if value_str.isdigit() or (value_str.replace('.', '', 1).isdigit() and value_str.count('.') <= 1):
+            try:
+                days = int(float(value_str))
+                # Excel base date is 1899-12-30 due to 1900 leap year bug
+                base_date = datetime.datetime(1899, 12, 30)
+                dt = base_date + datetime.timedelta(days=days)
+                return dt.strftime("%Y-%m-%d")
+            except Exception:
+                pass
+                
+    elif format_type == "time":
+        # Format time
+        for fmt in (
+            "%Y-%m-%dT%H:%M:%S.%f%z",
+            "%Y-%m-%dT%H:%M:%S%z",
+            "%Y-%m-%dT%H:%M:%S",
+            "%H:%M:%S",
+            "%H:%M",
+        ):
+            try:
+                clean_val = value_str
+                if clean_val.endswith("Z"):
+                    clean_val = clean_val[:-1] + "+00:00"
+                if "T" in clean_val or "-" in clean_val:
+                    dt = datetime.datetime.strptime(clean_val, fmt)
+                else:
+                    dt = datetime.datetime.strptime(clean_val, fmt)
+                return dt.strftime("%I:%M %p").lstrip('0')
+            except Exception:
+                continue
+                
+    elif format_type == "number":
+        try:
+            val_float = float(value_str)
+            if val_float.is_integer():
+                return str(int(val_float))
+            return f"{val_float:.2f}".rstrip('0').rstrip('.')
+        except ValueError:
+            pass
+            
+    return value_str
+
+
 def _element_box_px(elem: dict, canvas_width: int, canvas_height: int) -> tuple[int, int, int, int]:
     """
     Convert a stored relative design box into exact canvas pixels.
@@ -465,7 +553,7 @@ def _qr_box_px(elem: dict, canvas_width: int, canvas_height: int) -> tuple[int, 
     that contract exactly and never moves or auto-enlarges the slot.
     """
     left, top, width, height = _element_box_px(elem, canvas_width, canvas_height)
-    side = min(width, height, canvas_width - left, canvas_height - top)
+    side = min(width, canvas_width - left, canvas_height - top)
     return left, top, max(1, side)
 
 
@@ -648,7 +736,7 @@ def render_invitation_image(
 
                 maintain_square = elem.get("maintain_square", True)
                 if maintain_square:
-                    qr_size = min(qr_width_px, qr_height_px)
+                    qr_size = qr_width_px
                 else:
                     qr_size = qr_width_px
 
@@ -678,7 +766,44 @@ def render_invitation_image(
 
         elif etype == "image":
             # Static image element (logo, stamp, etc.)
-            pass
+            image_url = elem.get("static_content", "")
+            if image_url:
+                if image_url.startswith("blob:"):
+                    logger.warning(f"Found client-side blob URL in image element: {image_url}. Skipping rendering.")
+                    continue
+                try:
+                    img_bytes = None
+                    if image_url.startswith("data:image/"):
+                        try:
+                            header, encoded = image_url.split(",", 1)
+                            import base64
+                            img_bytes = base64.b64decode(encoded)
+                        except Exception as e:
+                            logger.error(f"Error decoding base64 image asset: {e}")
+                    elif image_url.startswith(("http://", "https://")):
+                        import httpx
+                        resp = httpx.get(image_url, timeout=10.0)
+                        if resp.status_code == 200:
+                            img_bytes = resp.content
+                    elif os.path.exists(image_url):
+                        with open(image_url, "rb") as f:
+                            img_bytes = f.read()
+
+                    if img_bytes:
+                        with Image.open(io.BytesIO(img_bytes)) as user_img:
+                            user_img = user_img.convert("RGBA")
+                            # Pillow 10+ uses Resampling enum
+                            resample_filter = getattr(Image, "Resampling", Image).LANCZOS
+                            user_img = user_img.resize((ew, eh), resample_filter)
+                            if rotation:
+                                rotate_filter = getattr(Image, "Resampling", Image).BICUBIC
+                                user_img = user_img.rotate(-rotation, expand=True, resample=rotate_filter)
+                            
+                            paste_x = left if not rotation else cx - user_img.width // 2
+                            paste_y = top if not rotation else cy - user_img.height // 2
+                            overlay.paste(user_img, (paste_x, paste_y), user_img)
+                except Exception as e:
+                    logger.error(f"Error rendering image element: {e}")
 
         elif etype == "custom_text":
             # Static text (not from data)
@@ -701,6 +826,12 @@ def render_invitation_image(
             text = _resolve_dynamic_text(data_key, element_context)
             if not text:
                 continue
+            
+            # Apply format if specified in static_content (we use static_content for format)
+            fmt_type = elem.get("static_content")
+            if fmt_type in ("date", "time", "number"):
+                text = _format_value_by_type(text, fmt_type)
+                
             _draw_text_element(draw, overlay, text, elem, left, top, ew, eh, cx, cy, rotation, canvas_width, canvas_height)
 
         else:
@@ -715,6 +846,13 @@ def render_invitation_image(
             text = _resolve_dynamic_text(data_key, element_context)
             if not text:
                 continue
+                
+            # Auto-format based on element type
+            if etype == "event_date":
+                text = _format_value_by_type(text, "date")
+            elif etype == "event_time":
+                text = _format_value_by_type(text, "time")
+                
             _draw_text_element(draw, overlay, text, elem, left, top, ew, eh, cx, cy, rotation, canvas_width, canvas_height)
 
     # Composite overlay onto background

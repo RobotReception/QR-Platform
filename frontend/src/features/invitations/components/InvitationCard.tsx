@@ -59,6 +59,13 @@ export function InvitationCard({ invitation: inv, selected, onSelect, onView, on
         {isVip ? 'VIP' : 'عادي'}
       </span>
 
+      {/* RSVP status badge if pending review */}
+      {inv.rsvp_status === 'pending' && (
+        <span className="inv-badge" style={{ background: 'rgba(245, 158, 11, 0.15)', color: '#f59e0b', border: '1px solid rgba(245, 158, 11, 0.3)' }}>
+          طلب قيد المراجعة
+        </span>
+      )}
+
       {/* Status badge */}
       <span className="inv-badge" style={{ background: statusColor + '20', color: statusColor }}>
         {statusLabel}

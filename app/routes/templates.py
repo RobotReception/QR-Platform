@@ -712,7 +712,15 @@ async def upload_asset(
             raise HTTPException(400, "حجم الملف يتجاوز 10MB")
 
     event_id = row["event_id"] or "shared"
-    safe_name = "".join(c for c in (file.filename or "asset") if c.isalnum() or c in (".", "-", "_"))
+    import uuid
+    # Keep only ASCII letters, numbers, dashes, underscores, and dots for the storage path
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    ext = "." + "".join(c for c in ext if c.isascii() and c.isalnum()) if ext else ""
+    clean_prefix = "".join(c for c in os.path.splitext(file.filename or "asset")[0] if c.isascii() and (c.isalnum() or c in ("-", "_")))
+    if not clean_prefix:
+        clean_prefix = "asset"
+    safe_name = f"{clean_prefix}_{uuid.uuid4().hex[:8]}{ext}"
+    
     path = storage_service.build_path(
         tenant_id, event_id, "templates", str(template_id), "assets", safe_name
     )

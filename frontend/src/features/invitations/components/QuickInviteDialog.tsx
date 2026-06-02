@@ -21,6 +21,7 @@ export function QuickInviteDialog({ isOpen, onClose, eventId, events }: Props) {
   const [count, setCount] = useState(10)
   const [names, setNames] = useState('')
   const [ticketClass, setTicketClass] = useState<TicketClass>('normal')
+  const [requireRsvp, setRequireRsvp] = useState(false)
   const { mutate, isPending, data, isSuccess } = useQuickInvitations()
 
   if (!isOpen) return null
@@ -28,7 +29,7 @@ export function QuickInviteDialog({ isOpen, onClose, eventId, events }: Props) {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!selectedEvent) return
-    const payload: any = { event_id: selectedEvent, ticket_class: ticketClass }
+    const payload: any = { event_id: selectedEvent, ticket_class: ticketClass, require_rsvp: requireRsvp }
     if (mode === 'count') {
       payload.count = count
     } else {
@@ -134,6 +135,20 @@ export function QuickInviteDialog({ isOpen, onClose, eventId, events }: Props) {
                 </span>
               </div>
             )}
+
+            {/* RSVP Toggle */}
+            <div className="dialog-field" style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
+              <input
+                type="checkbox"
+                id="quickRequireRsvp"
+                checked={requireRsvp}
+                onChange={(e) => setRequireRsvp(e.target.checked)}
+                style={{ width: '16px', height: '16px', accentColor: '#C9A96E' }}
+              />
+              <label htmlFor="quickRequireRsvp" style={{ margin: 0, fontSize: '0.85rem', color: '#d1d5db', cursor: 'pointer' }}>
+                طلب تأكيد الحضور (RSVP) من الضيوف قبل إصدار الكود
+              </label>
+            </div>
 
             <div className="dialog-actions">
               <button type="button" className="btn btn-ghost" onClick={onClose}>إلغاء</button>

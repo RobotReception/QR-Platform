@@ -7,7 +7,7 @@ import json
 sys.stdout.reconfigure(encoding='utf-8') if hasattr(sys.stdout, 'reconfigure') else None
 sys.path.insert(0, 'd:/QR')
 
-BASE = "http://localhost:8030/api/v1"
+BASE = "http://localhost:8020/api/v1"
 
 def post(path, body):
     req = urllib.request.Request(

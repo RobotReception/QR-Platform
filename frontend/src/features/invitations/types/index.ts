@@ -31,6 +31,7 @@ export interface Invitation {
   rsvp_status: RsvpStatus | null
   rsvp_at: string | null
   plus_one_count: number
+  rsvp_message: string | null
   checked_in_at: string | null
   checkin_count: number
   barcode_svg_url: string | null
@@ -61,6 +62,7 @@ export interface InvitationCreateRequest {
   zone?: string
   notes?: string
   metadata?: Record<string, any>
+  require_rsvp?: boolean
 }
 
 export interface QuickInviteRequest {
@@ -70,6 +72,7 @@ export interface QuickInviteRequest {
   count?: number
   names?: string[]
   gate_id?: string
+  require_rsvp?: boolean
 }
 
 export interface BulkFromGuestsRequest {
@@ -78,6 +81,7 @@ export interface BulkFromGuestsRequest {
   ticket_class?: TicketClass
   template_id?: string
   gate_id?: string
+  require_rsvp?: boolean
 }
 
 export interface InvitationUpdateRequest {
@@ -92,6 +96,13 @@ export interface InvitationUpdateRequest {
   zone?: string
   ticket_class?: TicketClass
   notes?: string
+  status?: InvitationStatus
+  rsvp_status?: RsvpStatus | null
+  plus_one_count?: number
+  rsvp_message?: string | null
+  rsvp_at?: string | null
+  guest_count?: number
+  metadata?: Record<string, any>
 }
 
 export interface InvitationSendRequest {

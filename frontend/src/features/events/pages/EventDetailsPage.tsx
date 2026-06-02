@@ -18,6 +18,9 @@ import { EventGatesTab } from '../components/EventGatesTab'
 import { EventInvitationsTab } from '../components/EventInvitationsTab'
 import { EventBarcodesTab } from '../components/EventBarcodesTab'
 import { EventTemplatesTab } from '../components/EventTemplatesTab'
+import { EventRsvpTab } from '../components/EventRsvpTab'
+import { EventRegistrationTab } from '../components/EventRegistrationTab'
+import { EventFinalInvitationsTab } from '../components/EventFinalInvitationsTab'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { getStatusConfig, formatDateFull } from '../utils/eventUtils'
 import {
@@ -30,12 +33,12 @@ import {
   CalendarDays,
   QrCode,
   Printer,
-  Palette,
+  Palette, CalendarCheck, ClipboardList, CheckCircle2,
 } from 'lucide-react'
 import '@features/users/pages/users.css'
 import './events.css'
 
-type Tab = 'overview' | 'gates' | 'invitations' | 'barcodes' | 'templates'
+type Tab = 'overview' | 'gates' | 'invitations' | 'final_invitations' | 'rsvp' | 'registration' | 'barcodes' | 'templates'
 
 export default function EventDetailsPage() {
   const { eventId } = useParams<{ eventId: string }>()
@@ -44,7 +47,7 @@ export default function EventDetailsPage() {
 
   const [searchParams] = useSearchParams()
   const tabFromUrl = searchParams.get('tab') as Tab | null
-  const [activeTab, setActiveTab] = useState<Tab>(tabFromUrl && ['overview', 'gates', 'invitations', 'barcodes', 'templates'].includes(tabFromUrl) ? tabFromUrl : 'overview')
+  const [activeTab, setActiveTab] = useState<Tab>(tabFromUrl && ['overview', 'gates', 'invitations', 'final_invitations', 'rsvp', 'registration', 'barcodes', 'templates'].includes(tabFromUrl) ? tabFromUrl : 'overview')
   const [showPublishConfirm, setShowPublishConfirm] = useState(false)
   const clearAuth = useAuthStore((s) => s.clearAuth)
 
@@ -213,15 +216,37 @@ export default function EventDetailsPage() {
           إنشاء الدعوات
         </button>
         <button
-          id="tab-barcodes"
-          className={`event-tab ${activeTab === 'barcodes' ? 'event-tab--active' : ''}`}
-          onClick={() => setActiveTab('barcodes')}
+          id="tab-final_invitations"
+          className={`event-tab ${activeTab === 'final_invitations' ? 'event-tab--active' : ''}`}
+          onClick={() => setActiveTab('final_invitations')}
           role="tab"
-          aria-selected={activeTab === 'barcodes'}
-          aria-controls="panel-barcodes"
+          aria-selected={activeTab === 'final_invitations'}
+          aria-controls="panel-final_invitations"
         >
-          <QrCode size={15} />
-          قائمة الدعوات
+          <CheckCircle2 size={15} style={{ color: '#C9A96E' }} />
+          <span style={{ fontWeight: 'bold' }}>الدعوات النهائية</span>
+        </button>
+        <button
+          id="tab-rsvp"
+          className={`event-tab ${activeTab === 'rsvp' ? 'event-tab--active' : ''}`}
+          onClick={() => setActiveTab('rsvp')}
+          role="tab"
+          aria-selected={activeTab === 'rsvp'}
+          aria-controls="panel-rsvp"
+        >
+          <CalendarCheck size={15} />
+          <span>تأكيد الحضور (RSVP)</span>
+        </button>
+        <button
+          id="tab-registration"
+          className={`event-tab ${activeTab === 'registration' ? 'event-tab--active' : ''}`}
+          onClick={() => setActiveTab('registration')}
+          role="tab"
+          aria-selected={activeTab === 'registration'}
+          aria-controls="panel-registration"
+        >
+          <ClipboardList size={15} />
+          نموذج التسجيل
         </button>
         <button
           id="tab-templates"
@@ -233,6 +258,17 @@ export default function EventDetailsPage() {
         >
           <Palette size={15} />
           قوالب الحفل
+        </button>
+        <button
+          id="tab-barcodes"
+          className={`event-tab ${activeTab === 'barcodes' ? 'event-tab--active' : ''}`}
+          onClick={() => setActiveTab('barcodes')}
+          role="tab"
+          aria-selected={activeTab === 'barcodes'}
+          aria-controls="panel-barcodes"
+        >
+          <QrCode size={15} />
+          سجلات التوليد والطباعة
         </button>
       </div>
 
@@ -255,15 +291,33 @@ export default function EventDetailsPage() {
         )}
       </div>
 
-      <div id="panel-barcodes" role="tabpanel" aria-labelledby="tab-barcodes" hidden={activeTab !== 'barcodes'}>
-        {activeTab === 'barcodes' && (
-          <EventBarcodesTab event={event} stats={stats} onlyHistory />
+      <div id="panel-final_invitations" role="tabpanel" aria-labelledby="tab-final_invitations" hidden={activeTab !== 'final_invitations'}>
+        {activeTab === 'final_invitations' && (
+          <EventFinalInvitationsTab event={event} stats={stats} />
+        )}
+      </div>
+
+      <div id="panel-rsvp" role="tabpanel" aria-labelledby="tab-rsvp" hidden={activeTab !== 'rsvp'}>
+        {activeTab === 'rsvp' && (
+          <EventRsvpTab eventId={event.id} allowRsvp={event.allow_rsvp} />
+        )}
+      </div>
+
+      <div id="panel-registration" role="tabpanel" aria-labelledby="tab-registration" hidden={activeTab !== 'registration'}>
+        {activeTab === 'registration' && (
+          <EventRegistrationTab event={event} isActiveTab={activeTab === 'registration'} />
         )}
       </div>
 
       <div id="panel-templates" role="tabpanel" aria-labelledby="tab-templates" hidden={activeTab !== 'templates'}>
         {activeTab === 'templates' && (
           <EventTemplatesTab eventId={event.id} isActiveTab={activeTab === 'templates'} />
+        )}
+      </div>
+
+      <div id="panel-barcodes" role="tabpanel" aria-labelledby="tab-barcodes" hidden={activeTab !== 'barcodes'}>
+        {activeTab === 'barcodes' && (
+          <EventBarcodesTab event={event} stats={stats} onlyHistory />
         )}
       </div>
 

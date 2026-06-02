@@ -1,5 +1,16 @@
 import http from '@services/http/client'
 
+export interface AssetRead {
+  id: string
+  template_id: string
+  asset_type: string
+  file_url: string
+  file_name: string | null
+  file_size: number | null
+  mime_type: string | null
+  created_at: string
+}
+
 export type TemplateType = 'quick' | 'designed'
 export type TemplateElementType =
   | 'guest_name'
@@ -131,6 +142,14 @@ export const templatesApi = {
     const formData = new FormData()
     formData.append('file', file)
     return http.post<{ background_url: string; file_size: number; mime_type?: string; width_px: number; height_px: number }>(`/templates/${templateId}/background`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }).then((r) => r.data)
+  },
+
+  uploadAsset: (templateId: string, file: File, assetType: string = 'overlay') => {
+    const formData = new FormData()
+    formData.append('file', file)
+    return http.post<AssetRead>(`/templates/${templateId}/assets?asset_type=${assetType}`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     }).then((r) => r.data)
   },

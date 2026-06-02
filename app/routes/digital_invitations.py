@@ -103,18 +103,24 @@ async def create_invitation(
     # Check quota
     await _check_quota(db, str(tenant_id), str(body.event_id), body.ticket_class)
 
+    status_val = "created"
+    rsvp_status_val = "pending"
+    if not body.require_rsvp:
+        status_val = "accepted"
+        rsvp_status_val = "accepted"
+
     result = await db.execute(
         text("""
             INSERT INTO invitations (
                 tenant_id, event_id, template_id, guest_id, ticket_class,
                 guest_name, guest_name_ar, guest_phone, guest_whatsapp, guest_email,
                 seat_number, table_number, gate_id, hall, zone,
-                notes, metadata, created_by
+                notes, metadata, created_by, status, rsvp_status
             ) VALUES (
                 :tid, :eid, :tmpl, :gid, CAST(:tc AS ticket_class),
                 :gname, :gname_ar, :gphone, :gwhatsapp, :gemail,
                 :seat, :tbl, :gate, :hall, :zone,
-                :notes, CAST(:meta AS jsonb), :uid
+                :notes, CAST(:meta AS jsonb), :uid, :status, :rsvp_status
             )
             RETURNING *
         """),
@@ -129,8 +135,10 @@ async def create_invitation(
             "gate": str(body.gate_id) if body.gate_id else None,
             "hall": body.hall, "zone": body.zone,
             "notes": body.notes,
-            "meta": json.dumps(body.metadata or {}, default=str),
+            "meta": json.dumps({**(body.metadata or {}), "require_rsvp": body.require_rsvp}, default=str),
             "uid": str(user.id),
+            "status": status_val,
+            "rsvp_status": rsvp_status_val,
         },
     )
     row = result.mappings().first()
@@ -206,6 +214,12 @@ async def create_quick_invites(
                 f"({quota_row['quota']}). المستخدم: {quota_row['used']}, المطلوب: {total}"
             )
 
+        status_val = "created"
+        rsvp_status_val = "pending"
+        if not body.require_rsvp:
+            status_val = "accepted"
+            rsvp_status_val = "accepted"
+
         # Batch INSERT — single query for all invitations
         values_parts = []
         params: dict = {
@@ -215,18 +229,21 @@ async def create_quick_invites(
             "tc": body.ticket_class,
             "gate": str(body.gate_id) if body.gate_id else None,
             "uid": str(user.id),
+            "status": status_val,
+            "rsvp_status": rsvp_status_val,
+            "meta": json.dumps({"require_rsvp": body.require_rsvp}, default=str),
         }
         for idx, name in enumerate(names):
             key = f"gn_{idx}"
             params[key] = name
             values_parts.append(
-                f"(:tid, :eid, :tmpl, CAST(:tc AS ticket_class), :{key}, :gate, :uid)"
+                f"(:tid, :eid, :tmpl, CAST(:tc AS ticket_class), :{key}, :gate, :uid, :status, :rsvp_status, CAST(:meta AS jsonb))"
             )
 
         insert_sql = f"""
             INSERT INTO invitations (
                 tenant_id, event_id, template_id, ticket_class,
-                guest_name, gate_id, created_by
+                guest_name, gate_id, created_by, status, rsvp_status, metadata
             ) VALUES {', '.join(values_parts)}
             RETURNING
                 id, token, guest_name,
@@ -283,6 +300,12 @@ async def create_bulk_from_guests(
     tenant_id = get_tenant_id_from_header(request)
     await require_permission(db, tenant_id, user.id, "invitations.create")
 
+    status_val = "created"
+    rsvp_status_val = "pending"
+    if not body.require_rsvp:
+        status_val = "accepted"
+        rsvp_status_val = "accepted"
+
     created = 0
     for gid in body.guest_ids:
         await _check_quota(db, str(tenant_id), str(body.event_id), body.ticket_class)
@@ -301,11 +324,11 @@ async def create_bulk_from_guests(
                 INSERT INTO invitations (
                     tenant_id, event_id, template_id, guest_id, ticket_class,
                     guest_name, guest_name_ar, guest_phone, guest_whatsapp, guest_email,
-                    gate_id, created_by
+                    gate_id, created_by, status, rsvp_status, metadata
                 ) VALUES (
                     :tid, :eid, :tmpl, :gid, CAST(:tc AS ticket_class),
                     :gname, :gname_ar, :gphone, :gwhatsapp, :gemail,
-                    :gate, :uid
+                    :gate, :uid, :status, :rsvp_status, CAST(:meta AS jsonb)
                 )
             """),
             {
@@ -316,6 +339,9 @@ async def create_bulk_from_guests(
                 "gphone": guest.get("phone"), "gwhatsapp": guest.get("phone"), "gemail": guest.get("email"),
                 "gate": str(body.gate_id) if body.gate_id else None,
                 "uid": str(user.id),
+                "status": status_val,
+                "rsvp_status": rsvp_status_val,
+                "meta": json.dumps({"require_rsvp": body.require_rsvp}, default=str),
             },
         )
         created += 1
@@ -348,7 +374,16 @@ async def update_invitation(
     if "gate_id" in updates and updates["gate_id"]:
         updates["gate_id"] = str(updates["gate_id"])
 
-    set_clauses = ", ".join(f"{k} = :{k}" for k in updates)
+    if "metadata" in updates and updates["metadata"] is not None:
+        updates["metadata"] = json.dumps(updates["metadata"])
+
+    clauses = []
+    for k in updates:
+        if k == "metadata":
+            clauses.append("metadata = CAST(:metadata AS jsonb)")
+        else:
+            clauses.append(f"{k} = :{k}")
+    set_clauses = ", ".join(clauses)
     updates["id"] = str(invitation_id)
     updates["tid"] = str(tenant_id)
 
@@ -359,6 +394,40 @@ async def update_invitation(
     row = result.mappings().first()
     if not row:
         raise HTTPException(404, "الدعوة غير موجودة")
+    
+    # ── Approval Barcode Generation ──
+    # If the invitation is being accepted/approved and doesn't have a barcode, generate it now!
+    row_dict = dict(row)
+    if (updates.get("rsvp_status") == "accepted" or updates.get("status") == "accepted") and not row_dict.get("qr_data"):
+        await _generate_barcode_for_row(db, tenant_id, row_dict["event_id"], row_dict)
+        # Re-fetch invitation to get updated barcode fields
+        refetch_res = await db.execute(
+            text("SELECT * FROM invitations WHERE id = :id"),
+            {"id": str(row["id"])}
+        )
+        updated_row = refetch_res.mappings().first()
+        if updated_row:
+            row_dict = dict(updated_row)
+            # Re-render card if template is set
+            if row_dict.get("template_id"):
+                # Fetch event row for rendering
+                ev_res = await db.execute(
+                    text("SELECT * FROM events WHERE id = :eid"),
+                    {"eid": str(row_dict["event_id"])}
+                )
+                ev_row = ev_res.mappings().first()
+                if ev_row:
+                    from app.routes.registration_forms import render_designed_card_for_invite
+                    await render_designed_card_for_invite(
+                        db, tenant_id, row_dict["event_id"], row_dict, row_dict["template_id"], dict(ev_row)
+                    )
+                    # Re-fetch final invitation details
+                    final_res = await db.execute(
+                        text("SELECT * FROM invitations WHERE id = :id"),
+                        {"id": str(row["id"])}
+                    )
+                    row = final_res.mappings().first()
+
     await db.commit()
     return InvitationRead(**dict(row))
 
@@ -481,7 +550,7 @@ async def view_invitation_public(
                 i.guest_name, i.guest_name_ar,
                 i.seat_number, i.table_number, i.hall, i.zone,
                 i.barcode_png_url, i.render_image_url, i.card_image_url,
-                i.qr_data, i.rsvp_status, i.plus_one_count,
+                i.qr_data, i.rsvp_status, i.rsvp_at, i.plus_one_count, i.rsvp_message, i.metadata,
                 e.title AS event_title, e.title_ar AS event_title_ar,
                 e.start_date, e.end_date,
                 e.venue_name, e.venue_name_ar,

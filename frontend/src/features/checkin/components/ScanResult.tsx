@@ -51,9 +51,9 @@ export function ScanResult({ result }: Props) {
         <div className="scan-result__event">{result.event_title}</div>
       )}
 
-      {result.checkin_count > 1 && (
+      {result.checkin_count !== undefined && (
         <div className="scan-result__count">
-          دخول رقم: {result.checkin_count}
+          مرات الدخول المسجلة: {result.checkin_count} / {result.guest_count || 1}
         </div>
       )}
     </div>

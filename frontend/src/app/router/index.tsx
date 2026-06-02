@@ -13,6 +13,7 @@ const EventDetailsPage   = lazy(() => import('@features/events/pages/EventDetail
 const EventDesignEditorPage = lazy(() => import('@features/events/pages/EventDesignEditorPage'))
 const InvitationsPage    = lazy(() => import('@features/invitations/pages/InvitationsPage'))
 const PublicInvitationPage = lazy(() => import('@features/invitations/pages/PublicInvitationPage'))
+const PublicRegistrationPage = lazy(() => import('@features/invitations/pages/PublicRegistrationPage'))
 const GuestsPage         = lazy(() => import('@features/guests/pages/GuestsPage'))
 const CheckinPage        = lazy(() => import('@features/checkin/pages/CheckinPage'))
 
@@ -91,6 +92,8 @@ export default function AppRouter() {
 
           {/* ── Public Routes (no auth) ── */}
           <Route path="/i/:token" element={<PublicInvitationPage />} />
+          <Route path="/register/:slug" element={<PublicRegistrationPage />} />
+          <Route path="/e/:slug" element={<PublicRegistrationPage />} />
 
           {/* ── Protected Routes ── */}
           <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />

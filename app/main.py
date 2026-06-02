@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.routes import auth, tenants, invites, subscriptions, usage, profiles, audit, platform, roles, dashboard
-from app.routes import events, digital_invitations, guests, templates, teams, checkin, batches, fast_invitations
+from app.routes import events, digital_invitations, guests, templates, teams, checkin, batches, fast_invitations, registration_forms
 from app.config import get_settings
 from app.middleware import TenantResolutionMiddleware, SecurityHeadersMiddleware, RateLimitMiddleware
 
@@ -68,6 +68,17 @@ app.include_router(teams.router, prefix="/api/v1")
 app.include_router(checkin.router, prefix="/api/v1")
 app.include_router(batches.router, prefix="/api/v1")
 app.include_router(fast_invitations.router, prefix="/api/v1")
+app.include_router(registration_forms.router, prefix="/api/v1")
+
+
+@app.on_event("startup")
+async def startup_event():
+    try:
+        from app.services import storage_service
+        await storage_service.ensure_bucket_exists()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("Could not ensure bucket exists on startup: %s", e)
 
 
 @app.get("/health")
