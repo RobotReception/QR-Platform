@@ -36,6 +36,7 @@ TENANT_EXEMPT_PATHS = {
     "/api/v1/custom-plans/calculate",
     "/api/v1/invites/accept",
     "/api/v1/webhooks/stripe",
+    "/api/v1/webhooks/paypal",
     "/api/v1/tenants",
     "/api/v1/platform",
     "/api/v1/invitations/view/",

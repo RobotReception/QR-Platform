@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Building2, Gauge, Loader2, Save, Settings } from 'lucide-react'
+import { Building2, CreditCard, Gauge, Loader2, Save, Settings, Sparkles } from 'lucide-react'
 import { PERM, usePermission } from '@shared/permissions'
 import { WorkspaceShell } from '@features/workspace/components/WorkspaceShell'
 import { useAuthStore } from '@features/auth/store/authStore'
 import { settingsAPI } from '../api/settingsApi'
+import { subscriptionsAPI } from '../api/subscriptionsApi'
+import { PricingModal } from '@features/dashboard/components/PricingModal'
 import './settings.css'
 
 const LIMIT_LABELS: Record<string, string> = {
@@ -26,8 +28,30 @@ function formatLimit(value: number) {
   return value === -1 ? 'غير محدود' : value.toLocaleString('ar-SA')
 }
 
+function formatDate(value?: string | null) {
+  if (!value) return 'غير متوفر'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'غير متوفر'
+  return new Intl.DateTimeFormat('ar-SA', { dateStyle: 'medium' }).format(date)
+}
+
+const USAGE_ORDER = [
+  'events_per_month',
+  'invitations_per_month',
+  'invitations_per_event',
+  'guests_max',
+  'gates_per_event',
+  'teams_max',
+  'seats_max',
+  'designed_templates',
+  'storage_mb',
+  'messages_per_month',
+  'ai_requests_per_month',
+] as const
+
 export default function SettingsPage() {
   const tenantId = useAuthStore(s => s.currentTenantId)
+  const tenants = useAuthStore(s => s.tenants)
 
   // Guard
   const hasAccess = usePermission(PERM.NAV_SETTINGS)
@@ -38,6 +62,9 @@ export default function SettingsPage() {
   const queryClient = useQueryClient()
   const [name, setName] = useState('')
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [isPricingOpen, setIsPricingOpen] = useState(false)
+  const currentMembership = tenants.find(t => t.tenant_id === tenantId)
+  const canCancelSubscription = currentMembership?.role === 'owner'
 
   const { data: tenant, isLoading: tenantLoading } = useQuery({
     queryKey: ['settings-tenant', tenantId],
@@ -51,6 +78,13 @@ export default function SettingsPage() {
     enabled: !!tenantId,
   })
 
+  const { data: subscription, isLoading: subscriptionLoading } = useQuery({
+    queryKey: ['current-subscription', tenantId],
+    queryFn: subscriptionsAPI.getCurrentSubscription,
+    enabled: !!tenantId,
+    retry: false,
+  })
+
   const updateMutation = useMutation({
     mutationFn: (body: { name: string }) => settingsAPI.updateTenant(body),
     onSuccess: () => {
@@ -60,7 +94,32 @@ export default function SettingsPage() {
     onError: () => setMsg({ type: 'error', text: 'فشل حفظ الإعدادات' }),
   })
 
+  const cancelMutation = useMutation({
+    mutationFn: subscriptionsAPI.cancelSubscription,
+    onSuccess: () => {
+      setMsg({ type: 'success', text: 'تم جدولة إلغاء الاشتراك بنهاية الفترة الحالية' })
+      queryClient.invalidateQueries({ queryKey: ['current-subscription', tenantId] })
+      queryClient.invalidateQueries({ queryKey: ['dashboard', tenantId] })
+    },
+    onError: (err: any) => {
+      setMsg({
+        type: 'error',
+        text: err?.response?.data?.detail || 'تعذر إلغاء الاشتراك حالياً. يرجى المحاولة لاحقاً.',
+      })
+    },
+  })
+
   const displayName = name || tenant?.name || ''
+  const usageLimits = (usage?.limits || [])
+    .filter(l => LIMIT_LABELS[l.key])
+    .filter((limit, index, arr) => arr.findIndex(item => item.key === limit.key) === index)
+    .sort((a, b) => {
+      const aIndex = USAGE_ORDER.indexOf(a.key as typeof USAGE_ORDER[number])
+      const bIndex = USAGE_ORDER.indexOf(b.key as typeof USAGE_ORDER[number])
+      const safeA = aIndex === -1 ? Number.MAX_SAFE_INTEGER : aIndex
+      const safeB = bIndex === -1 ? Number.MAX_SAFE_INTEGER : bIndex
+      return safeA - safeB
+    })
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault()
@@ -121,6 +180,77 @@ export default function SettingsPage() {
         </section>
 
         <section className="settings-card">
+          <h2><CreditCard size={18} /> الفوترة والاشتراك</h2>
+
+          {subscriptionLoading ? (
+            <Loader2 size={24} className="spin" />
+          ) : subscription ? (
+            <div className="settings-subscription">
+              <div className="settings-subscription__row">
+                <span>الخطة الحالية</span>
+                <strong>{subscription.plan_name}</strong>
+              </div>
+              <div className="settings-subscription__row">
+                <span>الحالة</span>
+                <strong>{subscription.status}</strong>
+              </div>
+              <div className="settings-subscription__row">
+                <span>مزود الدفع</span>
+                <strong>{subscription.provider}</strong>
+              </div>
+              <div className="settings-subscription__row">
+                <span>السعر الحالي</span>
+                <strong>
+                  {(subscription.price_monthly ?? 0).toLocaleString('en-US')} {subscription.currency || 'USD'} / شهر
+                </strong>
+              </div>
+              <div className="settings-subscription__row">
+                <span>نهاية الفترة</span>
+                <strong>{formatDate(subscription.current_period_end)}</strong>
+              </div>
+              <div className="settings-subscription__row">
+                <span>الإلغاء بنهاية الفترة</span>
+                <strong>{subscription.cancel_at_period_end ? 'نعم' : 'لا'}</strong>
+              </div>
+
+              <div className="settings-actions">
+                <button type="button" className="settings-btn" onClick={() => setIsPricingOpen(true)}>
+                  <Sparkles size={16} />
+                  تغيير الباقة
+                </button>
+                {canCancelSubscription && !subscription.cancel_at_period_end && (
+                  <button
+                    type="button"
+                    className="settings-btn settings-btn--danger"
+                    disabled={cancelMutation.isPending}
+                    onClick={() => {
+                      if (window.confirm('سيتم إلغاء الاشتراك بنهاية الفترة الحالية. هل تريد المتابعة؟')) {
+                        cancelMutation.mutate()
+                      }
+                    }}
+                  >
+                    {cancelMutation.isPending ? <Loader2 size={16} className="spin" /> : null}
+                    إلغاء الاشتراك
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="settings-subscription">
+              <p style={{ color: 'var(--color-text-muted)', fontSize: 13, margin: 0 }}>
+                لا يوجد اشتراك مدفوع نشط حالياً. يمكنك الترقية متى شئت من هنا.
+              </p>
+              <div className="settings-actions">
+                <button type="button" className="settings-btn" onClick={() => setIsPricingOpen(true)}>
+                  <Sparkles size={16} />
+                  عرض الباقات
+                </button>
+              </div>
+            </div>
+          )}
+        </section>
+
+        <section className="settings-card">
           <h2><Gauge size={18} /> الاشتراك والاستخدام</h2>
 
           {usageLoading ? (
@@ -131,9 +261,7 @@ export default function SettingsPage() {
                 الباقة: {usage.plan_code}
               </span>
               <div className="settings-usage-list">
-                {usage.limits
-                  .filter(l => LIMIT_LABELS[l.key])
-                  .map(l => (
+                {usageLimits.map(l => (
                     <div
                       key={l.key}
                       className={`settings-usage-item${l.is_exceeded ? ' settings-usage-item--exceeded' : ''}`}
@@ -159,6 +287,12 @@ export default function SettingsPage() {
           </p>
         </section>
       </div>
+
+      <PricingModal
+        isOpen={isPricingOpen}
+        onClose={() => setIsPricingOpen(false)}
+        currentPlanCode={subscription?.plan_code || usage?.plan_code || tenant?.plan || 'starter'}
+      />
     </WorkspaceShell>
   )
 }

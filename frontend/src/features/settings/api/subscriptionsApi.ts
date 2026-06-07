@@ -1,5 +1,7 @@
 import http from '@services/http/client'
 
+export type BillingPeriod = 'monthly' | 'yearly'
+
 export interface PlanLimit {
   id: string
   plan_id: string
@@ -41,6 +43,9 @@ export interface TenantSubscription {
   updated_at: string
   plan_code: string
   plan_name: string
+  price_monthly: number | null
+  price_yearly: number | null
+  currency: string | null
 }
 
 export const subscriptionsAPI = {
@@ -54,16 +59,34 @@ export const subscriptionsAPI = {
     return data
   },
 
-  createCheckoutSession: async (planCode: string, paymentProvider: string = 'paypal'): Promise<{ checkout_url: string; session_id: string; token?: string }> => {
+  createCheckoutSession: async (
+    planCode: string,
+    billingPeriod: BillingPeriod = 'monthly',
+    paymentProvider: string = 'paypal',
+  ): Promise<{ checkout_url: string; session_id: string; token?: string }> => {
+    const params = new URLSearchParams({
+      plan_code: planCode,
+      payment_provider: paymentProvider,
+      billing_period: billingPeriod,
+    })
     const { data } = await http.post<{ checkout_url: string; session_id: string; token?: string }>(
-      `/subscriptions/checkout?plan_code=${planCode}&payment_provider=${paymentProvider}`
+      `/subscriptions/checkout?${params.toString()}`
     )
     return data
   },
 
-  executePayPalSubscription: async (token: string): Promise<{ message: string; subscription_id: string }> => {
-    const { data } = await http.post<{ message: string; subscription_id: string }>(
-      `/subscriptions/paypal/execute?token=${token}`
+  executePayPalSubscription: async (token: string): Promise<{ message: string; subscription_id: string; plan_code?: string; billing_period?: BillingPeriod }> => {
+    const params = new URLSearchParams({ token })
+    const { data } = await http.post<{ message: string; subscription_id: string; plan_code?: string; billing_period?: BillingPeriod }>(
+      `/subscriptions/paypal/execute?${params.toString()}`
+    )
+    return data
+  },
+
+  changePlan: async (planCode: string): Promise<{ message: string; plan_code: string }> => {
+    const params = new URLSearchParams({ plan_code: planCode })
+    const { data } = await http.post<{ message: string; plan_code: string }>(
+      `/subscriptions/change-plan?${params.toString()}`
     )
     return data
   },

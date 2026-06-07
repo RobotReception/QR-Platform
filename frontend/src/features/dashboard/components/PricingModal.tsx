@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { X, Check, Loader2, Sparkles } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { subscriptionsAPI } from '../../settings/api/subscriptionsApi'
+import { subscriptionsAPI, type BillingPeriod } from '../../settings/api/subscriptionsApi'
 import './pricing.css'
 
 interface PricingModalProps {
@@ -28,7 +28,7 @@ function formatLimitValue(key: string, value: number) {
 }
 
 export function PricingModal({ isOpen, onClose, currentPlanCode = 'starter' }: PricingModalProps) {
-  const [billingPeriod, setBillingPeriod] = useState<'monthly' | 'yearly'>('monthly')
+  const [billingPeriod, setBillingPeriod] = useState<BillingPeriod>('monthly')
 
   // Fetch plans from backend
   const { data: plans, isLoading, error } = useQuery({
@@ -39,7 +39,8 @@ export function PricingModal({ isOpen, onClose, currentPlanCode = 'starter' }: P
 
   // Checkout Session Mutation (PayPal)
   const checkoutMutation = useMutation({
-    mutationFn: (planCode: string) => subscriptionsAPI.createCheckoutSession(planCode, 'paypal'),
+    mutationFn: ({ planCode, selectedBillingPeriod }: { planCode: string; selectedBillingPeriod: BillingPeriod }) =>
+      subscriptionsAPI.createCheckoutSession(planCode, selectedBillingPeriod, 'paypal'),
     onSuccess: (data) => {
       if (data.checkout_url) {
         // Redirect to PayPal for approval
@@ -48,6 +49,17 @@ export function PricingModal({ isOpen, onClose, currentPlanCode = 'starter' }: P
     },
     onError: (err: any) => {
       const msg = err.response?.data?.detail || 'فشلت عملية التحضير للترقية. يرجى المحاولة لاحقاً.'
+      alert(msg)
+    },
+  })
+
+  const changePlanMutation = useMutation({
+    mutationFn: (planCode: string) => subscriptionsAPI.changePlan(planCode),
+    onSuccess: (data) => {
+      window.location.href = `/dashboard?upgrade_success=true&plan=${encodeURIComponent(data.plan_code)}`
+    },
+    onError: (err: any) => {
+      const msg = err.response?.data?.detail || 'تعذر تغيير الباقة حالياً. يرجى المحاولة لاحقاً.'
       alert(msg)
     },
   })
@@ -131,11 +143,16 @@ export function PricingModal({ isOpen, onClose, currentPlanCode = 'starter' }: P
                   const isPopular = plan.is_popular
                   
                   // Price based on toggle
-                  const price = billingPeriod === 'monthly' ? plan.price_monthly : plan.price_yearly / 12
+                  const isYearly = billingPeriod === 'yearly'
+                  const price = isYearly ? plan.price_yearly : plan.price_monthly
+                  const displayCurrency = plan.currency || 'USD'
+                  const periodLabel = isYearly ? `${displayCurrency} / سنة` : `${displayCurrency} / شهر`
+                  const monthlyEquivalent = plan.price_yearly > 0 ? Math.round(plan.price_yearly / 12) : 0
                   
                   // Determine button label and action
                   let btnLabel = 'ترقية الباقة'
-                  let isDisabled = checkoutMutation.isPending
+                  const isFreePlan = plan.price_monthly === 0 && plan.price_yearly === 0
+                  let isDisabled = checkoutMutation.isPending || changePlanMutation.isPending
                   let btnVariant: 'primary' | 'secondary' = 'secondary'
 
                   if (isCurrent) {
@@ -144,6 +161,9 @@ export function PricingModal({ isOpen, onClose, currentPlanCode = 'starter' }: P
                     btnVariant = 'secondary'
                   } else if (isEnterprise) {
                     btnLabel = 'تواصل معنا'
+                    btnVariant = 'secondary'
+                  } else if (isFreePlan) {
+                    btnLabel = 'التحويل إلى المجانية'
                     btnVariant = 'secondary'
                   } else if (plan.sort_order < currentSortOrder) {
                     btnLabel = 'تغيير الباقة'
@@ -178,8 +198,13 @@ export function PricingModal({ isOpen, onClose, currentPlanCode = 'starter' }: P
                           <span className="plan-card__price-label">تسعير خاص</span>
                         ) : (
                           <>
-                            <span className="plan-card__price-amount">{price === 0 ? '0' : price.toLocaleString('en-US', { maximumFractionDigits: 0 })}</span>
-                            <span className="plan-card__price-period">ر.س / شهر</span>
+                            <div className="plan-card__price-copy">
+                              <span className="plan-card__price-amount">{price === 0 ? '0' : price.toLocaleString('en-US', { maximumFractionDigits: 0 })}</span>
+                              <span className="plan-card__price-period">{periodLabel}</span>
+                            </div>
+                            {isYearly && plan.price_yearly > 0 && (
+                              <span className="plan-card__price-subnote">يعادل تقريباً {monthlyEquivalent.toLocaleString('en-US')} {displayCurrency} شهرياً</span>
+                            )}
                           </>
                         )}
                       </div>
@@ -230,12 +255,14 @@ export function PricingModal({ isOpen, onClose, currentPlanCode = 'starter' }: P
                         onClick={() => {
                           if (isEnterprise) {
                             window.location.href = 'mailto:sales@qentry.com?subject=طلب ترقية لباقة Enterprise'
+                          } else if (isFreePlan) {
+                            changePlanMutation.mutate(plan.code)
                           } else {
-                            checkoutMutation.mutate(plan.code)
+                            checkoutMutation.mutate({ planCode: plan.code, selectedBillingPeriod: billingPeriod })
                           }
                         }}
                       >
-                        {checkoutMutation.isPending && checkoutMutation.variables === plan.code ? (
+                        {(checkoutMutation.isPending && checkoutMutation.variables?.planCode === plan.code) || (changePlanMutation.isPending && changePlanMutation.variables === plan.code) ? (
                           <>
                             <Loader2 size={16} className="spin" />
                             جاري التوجيه…

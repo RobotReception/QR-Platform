@@ -316,6 +316,7 @@ export default function DashboardPage() {
       queryClient.invalidateQueries({ queryKey: ['dashboard', currentTenantId] })
       queryClient.invalidateQueries({ queryKey: ['settings-usage', currentTenantId] })
       queryClient.invalidateQueries({ queryKey: ['settings-tenant', currentTenantId] })
+      queryClient.invalidateQueries({ queryKey: ['current-subscription', currentTenantId] })
 
       // Clear parameters from search history cleanly
       const newParams = new URLSearchParams(searchParams)

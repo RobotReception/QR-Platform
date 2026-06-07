@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { Loader2, CheckCircle, XCircle } from 'lucide-react'
 import { subscriptionsAPI } from '../api/subscriptionsApi'
+import { useAuthStore } from '@features/auth/store/authStore'
 
 export default function PayPalExecutePage() {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const currentTenantId = useAuthStore(s => s.currentTenantId)
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading')
   const [message, setMessage] = useState('جاري تنفيذ الاشتراك...')
 
@@ -20,13 +24,22 @@ export default function PayPalExecutePage() {
 
     // Execute PayPal subscription
     subscriptionsAPI.executePayPalSubscription(token)
-      .then(() => {
+      .then((result) => {
         setStatus('success')
         setMessage('تم تفعيل اشتراكك بنجاح!')
+
+        if (currentTenantId) {
+          void queryClient.invalidateQueries({ queryKey: ['dashboard', currentTenantId] })
+          void queryClient.invalidateQueries({ queryKey: ['settings-usage', currentTenantId] })
+          void queryClient.invalidateQueries({ queryKey: ['settings-tenant', currentTenantId] })
+          void queryClient.invalidateQueries({ queryKey: ['current-subscription', currentTenantId] })
+        }
         
         // Redirect to dashboard after 2 seconds
         setTimeout(() => {
-          navigate('/dashboard')
+          const params = new URLSearchParams({ upgrade_success: 'true' })
+          if (result.plan_code) params.set('plan', result.plan_code)
+          navigate(`/dashboard?${params.toString()}`, { replace: true })
         }, 2000)
       })
       .catch((error) => {
@@ -34,7 +47,7 @@ export default function PayPalExecutePage() {
         setMessage('فشل تنفيذ الاشتراك. يرجى المحاولة مرة أخرى أو التواصل مع الدعم.')
         console.error('PayPal execution error:', error)
       })
-  }, [searchParams, navigate])
+  }, [searchParams, navigate, currentTenantId, queryClient])
 
   return (
     <div style={{

@@ -35,6 +35,7 @@ export function SubscriptionCard({ subscription, planFallback }: SubscriptionCar
   const [isPricingOpen, setIsPricingOpen] = useState(false)
   const plan = subscription?.plan_name || planFallback || 'Free'
   const price = subscription?.price_monthly ?? 0
+  const currency = subscription?.currency || 'USD'
   const status = subscription?.sub_status || 'active'
   const days = daysRemaining(subscription?.current_period_end)
   
@@ -62,8 +63,8 @@ export function SubscriptionCard({ subscription, planFallback }: SubscriptionCar
 
         {/* price */}
         <div className="subscription-card__price">
-          <strong>${price}</strong>
-          <span>/ شهريًا</span>
+          <strong>{price.toLocaleString('en-US')}</strong>
+          <span>{currency} / شهريًا</span>
         </div>
 
         {/* details */}
@@ -80,6 +81,13 @@ export function SubscriptionCard({ subscription, planFallback }: SubscriptionCar
               <strong className={days <= 7 ? 'text-warning' : ''}>{days} يوم</strong>
             </div>
           )}
+          {subscription?.cancel_at_period_end && (
+            <div className="subscription-card__row">
+              <Sparkles size={14} />
+              <span>حالة الإلغاء</span>
+              <strong className="text-warning">سينتهي الاشتراك بنهاية الفترة الحالية</strong>
+            </div>
+          )}
         </div>
 
         {/* upgrade CTA (visible for plans below enterprise) */}
@@ -90,7 +98,7 @@ export function SubscriptionCard({ subscription, planFallback }: SubscriptionCar
             onClick={() => setIsPricingOpen(true)}
           >
             <Sparkles size={14} />
-            ترقية الآن
+            إدارة الباقة
           </button>
         )}
       </motion.div>

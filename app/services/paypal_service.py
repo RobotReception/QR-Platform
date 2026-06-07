@@ -3,6 +3,9 @@ PayPal Service for handling PayPal subscriptions and payments.
 This service provides a complete interface to PayPal API for subscription management.
 """
 import paypalrestsdk
+import requests
+from datetime import datetime, timedelta, timezone
+from urllib.parse import parse_qs, urlparse
 from typing import Optional, Dict, Any
 from app.config import get_settings
 
@@ -27,15 +30,22 @@ class PayPalService:
 
     def is_configured(self) -> bool:
         """Check if PayPal is properly configured with valid credentials."""
-        return bool(self.client_id and self.client_secret and self.client_id != "your-paypal-client-id")
+        return bool(
+            self.client_id
+            and self.client_secret
+            and self.client_id != "your-paypal-client-id"
+            and self.client_secret != "your-paypal-client-secret"
+        )
 
     def create_billing_plan(
         self,
         plan_code: str,
         plan_name: str,
         description: str,
-        price_monthly: float,
-        currency: str = "SAR"
+        amount: float,
+        currency: str = "SAR",
+        billing_period: str = "monthly",
+        app_url: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Create a billing plan in PayPal for a subscription.
@@ -44,8 +54,10 @@ class PayPalService:
             plan_code: Unique identifier for the plan (e.g., 'basic', 'pro')
             plan_name: Display name of the plan
             description: Description of the plan
-            price_monthly: Monthly price in the specified currency
+            amount: Billing amount in the specified currency
             currency: Currency code (default: SAR)
+            billing_period: monthly or yearly
+            app_url: Frontend base URL used for PayPal return/cancel callbacks
         
         Returns:
             PayPal plan object if successful, None otherwise
@@ -53,16 +65,19 @@ class PayPalService:
         if not self.is_configured():
             return None
 
-        # Define the payment definition for monthly billing
+        effective_app_url = (app_url or settings.app_url).rstrip("/")
+        is_yearly = billing_period == "yearly"
+
+        # Define the payment definition for the selected billing cycle
         payment_definition = {
-            "name": f"{plan_name} - Monthly",
+            "name": f"{plan_name} - {'Yearly' if is_yearly else 'Monthly'}",
             "type": "REGULAR",
-            "frequency": "Month",
+            "frequency": "Year" if is_yearly else "Month",
             "frequency_interval": "1",
             "cycles": "0",  # 0 = infinite (recurring)
             "amount": {
                 "currency": currency,
-                "value": f"{price_monthly:.2f}"
+                "value": f"{amount:.2f}"
             }
         }
 
@@ -72,8 +87,8 @@ class PayPalService:
                 "currency": currency,
                 "value": "0.00"
             },
-            "cancel_url": f"{settings.app_url}/dashboard",
-            "return_url": f"{settings.app_url}/billing/paypal/execute",
+            "cancel_url": f"{effective_app_url}/settings?billing=cancelled",
+            "return_url": f"{effective_app_url}/billing/paypal/execute",
             "max_fail_attempts": "3",
             "auto_bill_amount": "YES",
             "initial_fail_amount_action": "CONTINUE"
@@ -90,7 +105,7 @@ class PayPalService:
 
         if plan.create():
             # Activate the plan
-            if plan.update({"state": "ACTIVE"}):
+            if plan.activate():
                 return {
                     "id": plan.id,
                     "name": plan.name,
@@ -122,10 +137,12 @@ class PayPalService:
             return None
 
         # Create the agreement
+        start_date = (datetime.now(timezone.utc) + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
         agreement = paypalrestsdk.BillingAgreement({
             "name": "Qentry Platform Subscription",
             "description": "Subscription to Qentry Platform",
-            "start_date": "2025-01-01T00:00:00Z",  # Will be updated by PayPal
+            "start_date": start_date,
             "plan": {
                 "id": plan_id
             },
@@ -137,20 +154,22 @@ class PayPalService:
             }
         })
 
-        # Add metadata if provided
-        if metadata:
-            agreement["custom"] = str(metadata)
-
         if agreement.create():
             # Extract the approval URL
+            approval_url = None
             for link in agreement.links:
                 if link.rel == "approval_url":
-                    return {
-                        "id": agreement.id,
-                        "approval_url": link.href,
-                        "token": agreement.token,
-                        "state": agreement.state
-                    }
+                    approval_url = link.href
+                    break
+
+            if approval_url:
+                token = parse_qs(urlparse(approval_url).query).get("token", [None])[0]
+                return {
+                    "id": token or agreement.id,
+                    "approval_url": approval_url,
+                    "token": token,
+                    "state": getattr(agreement, "state", None),
+                }
         
         return None
 
@@ -204,12 +223,7 @@ class PayPalService:
         agreement = paypalrestsdk.BillingAgreement.find(subscription_id)
         
         if agreement:
-            # Note: PayPal doesn't have a direct cancel method
-            # We need to update the state to CANCELLED
-            # This may require using the REST API directly
-            # For now, return False to indicate this needs implementation
-            # TODO: Implement proper cancellation using PayPal REST API
-            return False
+            return bool(agreement.cancel({"note": "User requested cancellation at period end"}))
         
         return False
 
@@ -259,11 +273,61 @@ class PayPalService:
         Returns:
             True if signature is valid, False otherwise
         """
-        # PayPal webhooks use a different verification method
-        # This is a placeholder - actual implementation requires
-        # PayPal webhook ID and certificate verification
-        # TODO: Implement proper webhook signature verification
-        return True
+        if not settings.paypal_webhook_id:
+            return settings.app_env.lower() != "production"
+
+        required_headers = {
+            "paypal-auth-algo",
+            "paypal-cert-url",
+            "paypal-transmission-id",
+            "paypal-transmission-sig",
+            "paypal-transmission-time",
+        }
+        if not required_headers.issubset({k.lower() for k in headers.keys()}):
+            return settings.app_env.lower() != "production"
+
+        auth_url = (
+            "https://api-m.paypal.com/v1/oauth2/token"
+            if self.mode == "live"
+            else "https://api-m.sandbox.paypal.com/v1/oauth2/token"
+        )
+        verify_url = (
+            "https://api-m.paypal.com/v1/notifications/verify-webhook-signature"
+            if self.mode == "live"
+            else "https://api-m.sandbox.paypal.com/v1/notifications/verify-webhook-signature"
+        )
+
+        try:
+            token_res = requests.post(
+                auth_url,
+                auth=(self.client_id, self.client_secret),
+                data={"grant_type": "client_credentials"},
+                timeout=20,
+            )
+            token_res.raise_for_status()
+            access_token = token_res.json()["access_token"]
+
+            verify_res = requests.post(
+                verify_url,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {access_token}",
+                },
+                json={
+                    "transmission_id": headers.get("paypal-transmission-id") or headers.get("PayPal-Transmission-Id"),
+                    "transmission_time": headers.get("paypal-transmission-time") or headers.get("PayPal-Transmission-Time"),
+                    "cert_url": headers.get("paypal-cert-url") or headers.get("PayPal-Cert-Url"),
+                    "auth_algo": headers.get("paypal-auth-algo") or headers.get("PayPal-Auth-Algo"),
+                    "transmission_sig": headers.get("paypal-transmission-sig") or headers.get("PayPal-Transmission-Sig"),
+                    "webhook_id": settings.paypal_webhook_id,
+                    "webhook_event": requests.models.complexjson.loads(body),
+                },
+                timeout=20,
+            )
+            verify_res.raise_for_status()
+            return verify_res.json().get("verification_status") == "SUCCESS"
+        except Exception:
+            return False
 
 
 # Singleton instance

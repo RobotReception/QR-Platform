@@ -46,3 +46,6 @@ class SubscriptionRead(BaseModel):
 class SubscriptionWithPlan(SubscriptionRead):
     plan_code: str
     plan_name: str
+    price_monthly: Optional[float] = None
+    price_yearly: Optional[float] = None
+    currency: Optional[str] = None

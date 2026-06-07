@@ -148,6 +148,8 @@ async def get_dashboard_analytics(
             p.name AS plan_name,
             p.code AS plan_code,
             p.price_monthly,
+            p.price_yearly,
+            :currency AS currency,
             s.current_period_start::text,
             s.current_period_end::text,
             s.trial_ends_at::text,
@@ -157,7 +159,7 @@ async def get_dashboard_analytics(
         WHERE s.tenant_id = :tid
         ORDER BY s.created_at DESC
         LIMIT 1
-    """, p)
+    """, {**p, "currency": settings.paypal_currency or "USD"})
     if r:
         row = r.mappings().first()
         analytics["subscription"] = dict(row) if row else None

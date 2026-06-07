@@ -227,6 +227,12 @@
 .plan-card__pricing {
   margin-bottom: 24px;
   display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.plan-card__price-copy {
+  display: flex;
   align-items: baseline;
   gap: 4px;
 }
@@ -241,6 +247,11 @@
 .plan-card__price-period {
   font-size: 14px;
   color: #94a3b8;
+}
+
+.plan-card__price-subnote {
+  font-size: 12px;
+  color: #64748b;
 }
 
 .plan-card__price-label {

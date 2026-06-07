@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     paypal_client_id: str = ""
     paypal_client_secret: str = ""
     paypal_mode: str = "sandbox"
+    paypal_webhook_id: str = ""
+    paypal_currency: str = ""
 
     # SMTP
     smtp_host: str = "smtp.gmail.com"

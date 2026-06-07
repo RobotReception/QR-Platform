@@ -40,19 +40,50 @@ function LoadingScreen() {
 }
 
 function useAuthHydrated() {
-  const [hydrated, setHydrated] = useState(() => useAuthStore.persist.hasHydrated())
+  const [hydrated, setHydrated] = useState(() => {
+    try {
+      return useAuthStore.persist.hasHydrated()
+    } catch {
+      return true
+    }
+  })
 
   useEffect(() => {
-    if (useAuthStore.persist.hasHydrated()) {
+    let settled = false
+    let fallback: number | undefined
+    const finishHydration = () => {
+      if (settled) return
+      settled = true
+      if (fallback) window.clearTimeout(fallback)
       setHydrated(true)
+    }
+
+    try {
+      if (useAuthStore.persist.hasHydrated()) {
+        finishHydration()
+        return
+      }
+    } catch {
+      finishHydration()
       return
     }
 
-    const unsubscribe = useAuthStore.persist.onFinishHydration(() => {
-      setHydrated(true)
+    const unsubscribe = useAuthStore.persist.onFinishHydration(finishHydration)
+    fallback = window.setTimeout(() => {
+      console.warn('Auth storage hydration timed out; continuing with current auth state.')
+      finishHydration()
+    }, 1500)
+
+    void Promise.resolve(useAuthStore.persist.rehydrate()).catch((error) => {
+      console.warn('Auth storage hydration failed; continuing with current auth state.', error)
+      finishHydration()
     })
 
-    return unsubscribe
+    return () => {
+      settled = true
+      if (fallback) window.clearTimeout(fallback)
+      unsubscribe()
+    }
   }, [])
 
   return hydrated
@@ -133,4 +164,3 @@ export default function AppRouter() {
     </BrowserRouter>
   )
 }
-

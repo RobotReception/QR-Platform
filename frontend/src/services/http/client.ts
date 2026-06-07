@@ -1,6 +1,26 @@
 import axios from 'axios'
 
-const BASE_URL = import.meta.env.VITE_API_URL || '/api/v1'
+function resolveApiBaseUrl() {
+  const configured = import.meta.env.VITE_API_URL || '/api/v1'
+
+  if (typeof window === 'undefined') return configured
+
+  try {
+    const url = new URL(configured)
+    const isLoopbackHost = ['localhost', '127.0.0.1', '0.0.0.0'].includes(url.hostname)
+    const isBrowserLocal = ['localhost', '127.0.0.1', '0.0.0.0'].includes(window.location.hostname)
+
+    if (isLoopbackHost && !isBrowserLocal) {
+      return '/api/v1'
+    }
+
+    return configured
+  } catch {
+    return configured
+  }
+}
+
+export const BASE_URL = resolveApiBaseUrl()
 
 // ── Storage Keys ──
 export const STORAGE = {

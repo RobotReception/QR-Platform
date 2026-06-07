@@ -8,6 +8,7 @@ import * as XLSX from 'xlsx'
 import { templatesApi, type TemplateElementCreateRequest, type TemplateElementType } from '../api/templatesApi'
 import { WorkspaceShell } from '@features/workspace/components/WorkspaceShell'
 import { Can, PERM, usePermission } from '@shared/permissions'
+import { BASE_URL } from '@services/http/client'
 import './events.css'
 
 
@@ -179,8 +180,7 @@ const applyFontFaces = (list: { value: string }[]) => {
     document.head.appendChild(styleEl)
   }
 
-  const rawApiUrl = import.meta.env.VITE_API_URL || '/api/v1'
-  const cleanApiUrl = rawApiUrl.endsWith('/') ? rawApiUrl.slice(0, -1) : rawApiUrl
+  const cleanApiUrl = BASE_URL.endsWith('/') ? BASE_URL.slice(0, -1) : BASE_URL
   const apiBase = cleanApiUrl.startsWith('http') 
     ? cleanApiUrl 
     : `${window.location.protocol}//${window.location.host}${cleanApiUrl.startsWith('/') ? cleanApiUrl : '/' + cleanApiUrl}`

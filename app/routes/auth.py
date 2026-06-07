@@ -131,7 +131,22 @@ async def signup(
 
     user_id = str(user.id)
 
-    # ── 2. Auto-create tenant ──
+    # ── 2. Ensure local profile exists before tenant/membership inserts ──
+    try:
+        await db.execute(
+            text("""
+                INSERT INTO profiles (id, full_name, avatar_url)
+                VALUES (:uid, :name, '')
+                ON CONFLICT (id) DO NOTHING
+            """),
+            {"uid": user_id, "name": body.full_name or ""},
+        )
+        await db.flush()
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Profile provisioning failed: {str(e)}")
+
+    # ── 3. Auto-create tenant ──
     org_name = body.organization_name or f"{body.full_name or body.email.split('@')[0]}'s Workspace"
     base_slug = re.sub(r'[^a-z0-9]+', '-', org_name.lower()).strip('-')
     if len(base_slug) < 3:
@@ -151,7 +166,7 @@ async def signup(
         tenant = tenant_result.mappings().first()
         tenant_id = str(tenant["id"])
 
-        # ── 3. Create owner membership ──
+        # ── 4. Create owner membership ──
         await db.execute(
             text("""
                 INSERT INTO memberships (tenant_id, user_id, role, status)
@@ -160,7 +175,7 @@ async def signup(
             {"tid": tenant_id, "uid": user_id},
         )
 
-        # ── 4. Create free subscription ──
+        # ── 5. Create free subscription ──
         await db.execute(
             text("""
                 INSERT INTO subscriptions (tenant_id, plan_id, status,
@@ -175,18 +190,8 @@ async def signup(
             {"tid": tenant_id},
         )
 
-        # ── 5. Provision default roles, permissions, settings ──
+        # ── 6. Provision default roles, permissions, settings ──
         await provision_tenant_manual(db, tenant["id"], user.id)
-
-        # ── 6. Create user profile ──
-        await db.execute(
-            text("""
-                INSERT INTO profiles (id, full_name, avatar_url)
-                VALUES (:uid, :name, '')
-                ON CONFLICT (id) DO NOTHING
-            """),
-            {"uid": user_id, "name": body.full_name or ""},
-        )
 
         await db.commit()
 

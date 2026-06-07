@@ -47,23 +47,32 @@ async def get_tenant_plan_limits(db: AsyncSession, tenant_id: UUID) -> tuple[str
         return plan_code, limits_list
 
     # 2. Check standard subscription plan limits
-    result = await db.execute(
+    latest_sub_res = await db.execute(
         text("""
-            SELECT p.code AS plan_code, pl.key, pl.value, pl.period
+            SELECT s.plan_id, p.code AS plan_code
             FROM subscriptions s
             JOIN plans p ON p.id = s.plan_id
-            JOIN plan_limits pl ON pl.plan_id = p.id
             WHERE s.tenant_id = :tenant_id
               AND s.status IN ('active', 'trialing')
             ORDER BY s.created_at DESC
-            LIMIT 100
+            LIMIT 1
         """),
         {"tenant_id": str(tenant_id)},
     )
-    rows = result.mappings().all()
-    if rows:
-        plan_code = rows[0]["plan_code"]
-        limits = [dict(r) for r in rows]
+    latest_sub = latest_sub_res.mappings().first()
+    if latest_sub:
+        limits_res = await db.execute(
+            text("""
+                SELECT :plan_code AS plan_code, pl.key, pl.value, pl.period
+                FROM plan_limits pl
+                WHERE pl.plan_id = :plan_id
+                ORDER BY pl.key
+                LIMIT 100
+            """),
+            {"plan_id": str(latest_sub["plan_id"]), "plan_code": latest_sub["plan_code"]},
+        )
+        plan_code = latest_sub["plan_code"]
+        limits = [dict(r) for r in limits_res.mappings().all()]
         return plan_code, limits
 
     # 3. Fallback: Check limits associated with the plan code in tenants table
@@ -134,9 +143,13 @@ async def check_all_limits(db: AsyncSession, tenant_id: UUID) -> UsageCheckResul
 
     limit_infos = []
     any_exceeded = False
+    seen_keys: set[str] = set()
 
     for limit in limits:
         key = limit["key"]
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
         max_value = limit["value"]
         current = usage.get(key, 0)
 

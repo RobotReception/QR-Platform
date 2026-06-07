@@ -6,6 +6,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
 from math import ceil
+from datetime import datetime, timedelta, timezone
 
 from app.auth import get_current_user, get_tenant_id_from_header, CurrentUser
 from app.config import get_settings
@@ -31,6 +32,28 @@ paypal_service = get_paypal_service()
 router = APIRouter(tags=["Subscriptions & Plans"])
 
 
+def _resolve_app_url(request: Request) -> str:
+    origin = request.headers.get("origin")
+    if origin:
+        return origin.rstrip("/")
+
+    referer = request.headers.get("referer")
+    if referer:
+        parts = referer.split("/", 3)
+        if len(parts) >= 3:
+            return f"{parts[0]}//{parts[2]}".rstrip("/")
+
+    return settings.app_url.rstrip("/")
+
+
+def _resolve_paypal_currency(plan_currency: str | None) -> str:
+    if settings.paypal_currency:
+        return settings.paypal_currency.upper()
+    if settings.paypal_mode.lower() == "sandbox":
+        return "USD"
+    return (plan_currency or "USD").upper()
+
+
 # ══════════════════════════════════════════════
 # PLANS (public)
 # ══════════════════════════════════════════════
@@ -42,12 +65,14 @@ async def list_plans(db: AsyncSession = Depends(get_db)):
         plans_result = await db.execute(
             text("""
                 SELECT id, code, name, description, subtitle,
-                       price_monthly, price_yearly, currency, is_active, sort_order,
+                       price_monthly, price_yearly, :display_currency AS currency, is_active, sort_order,
                        badge_color, is_popular, is_customizable, features
                 FROM plans
                 WHERE is_active = true
                 ORDER BY sort_order
             """)
+            ,
+            {"display_currency": _resolve_paypal_currency(None)},
         )
         plans = plans_result.mappings().all()
 
@@ -80,12 +105,13 @@ async def list_plans(db: AsyncSession = Depends(get_db)):
                 name,
                 price_monthly,
                 price_yearly,
-                'SAR' AS currency,
+                :display_currency AS currency,
                 true AS is_active,
                 row_number() OVER (ORDER BY price_monthly, name)::int AS sort_order
             FROM plans
             ORDER BY price_monthly, name
-        """)
+        """),
+        {"display_currency": _resolve_paypal_currency(None)},
     )
     return [PlanWithLimits(**dict(plan), limits=[]) for plan in plans_result.mappings().all()]
 
@@ -102,18 +128,24 @@ async def get_current_subscription(
 ):
     """Get the active subscription for the current tenant."""
     tenant_id = get_tenant_id_from_header(request)
-    await require_permission(db, tenant_id, user.id, "settings.manage")
+    await require_permission(db, tenant_id, user.id, "settings.view")
 
     result = await db.execute(
         text("""
-            SELECT s.*, p.code AS plan_code, p.name AS plan_name
+            SELECT
+                s.*,
+                p.code AS plan_code,
+                p.name AS plan_name,
+                p.price_monthly,
+                p.price_yearly,
+                :display_currency AS currency
             FROM subscriptions s
             JOIN plans p ON p.id = s.plan_id
             WHERE s.tenant_id = :tid AND s.status IN ('active', 'trialing')
             ORDER BY s.created_at DESC
             LIMIT 1
         """),
-        {"tid": str(tenant_id)},
+        {"tid": str(tenant_id), "display_currency": _resolve_paypal_currency(None)},
     )
     row = result.mappings().first()
     if not row:
@@ -127,6 +159,7 @@ async def create_checkout_session(
     plan_code: str,
     request: Request,
     payment_provider: str = "paypal",
+    billing_period: str = "monthly",
     user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -134,9 +167,16 @@ async def create_checkout_session(
     tenant_id = get_tenant_id_from_header(request)
     await require_permission(db, tenant_id, user.id, "settings.manage")
 
+    billing_period = billing_period.lower()
+    if billing_period not in {"monthly", "yearly"}:
+        raise HTTPException(status_code=400, detail="Unsupported billing period")
+
+    if payment_provider.lower() != "paypal":
+        raise HTTPException(status_code=400, detail="Unsupported payment provider")
+
     # Get plan
     plan_result = await db.execute(
-        text("SELECT id, code, name, price_monthly FROM plans WHERE code = :code AND is_active = true"),
+        text("SELECT id, code, name, currency, price_monthly, price_yearly FROM plans WHERE code = :code AND is_active = true"),
         {"code": plan_code},
     )
     plan = plan_result.mappings().first()
@@ -145,96 +185,60 @@ async def create_checkout_session(
 
     # Check if PayPal is configured
     if not paypal_service.is_configured():
-        # Fallback to mock bypass for development
-        # Deactivate old active/trialing subscriptions
-        await db.execute(
-            text("UPDATE subscriptions SET status = 'canceled' WHERE tenant_id = :tid AND status IN ('active', 'trialing')"),
-            {"tid": str(tenant_id)},
-        )
+        raise HTTPException(status_code=503, detail="PayPal is not configured on the server yet")
 
-        # Create new subscription
-        await db.execute(
-            text("""
-                INSERT INTO subscriptions (tenant_id, plan_id, provider, provider_customer_id, provider_subscription_id, status, current_period_start, current_period_end)
-                VALUES (
-                    :tid,
-                    (SELECT id FROM plans WHERE code = :plan_code),
-                    'mock_bypass',
-                    'mock_customer',
-                    'mock_sub_' || :plan_code || '_' || substring(md5(random()::text) from 1 for 8),
-                    'active',
-                    now(),
-                    now() + INTERVAL '30 days'
-                )
-            """),
-            {
-                "tid": str(tenant_id),
-                "plan_code": plan_code,
-            },
-        )
+    amount = float(plan["price_yearly"] if billing_period == "yearly" else plan["price_monthly"])
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Selected plan cannot be purchased through checkout")
 
-        # Update tenant plan column
-        await db.execute(
-            text("UPDATE tenants SET plan = :plan_code, updated_at = now() WHERE id = :tid"),
-            {"plan_code": plan_code, "tid": str(tenant_id)}
-        )
+    app_url = _resolve_app_url(request)
 
-        await log_audit(
-            db,
-            tenant_id=tenant_id,
-            actor_user_id=user.id,
-            action="subscription.upgrade_mock",
-            resource_type="subscription",
-            resource_id=str(tenant_id),
-            metadata={"plan": plan_code},
-            ip_address=request.client.host if request.client else None,
-        )
-        await db.commit()
-
-        checkout_url = f"{settings.app_url}/dashboard?upgrade_success=true&plan={plan_code}"
-        return {"checkout_url": checkout_url, "session_id": "mock_session_id_bypass"}
-
-    # Create or get PayPal billing plan
-    # Check if plan already exists in PayPal
-    paypal_plan_id = None
-    # For simplicity, we'll create a new plan each time
-    # In production, you'd cache PayPal plan IDs
+    # Create PayPal billing plan
     paypal_plan = paypal_service.create_billing_plan(
         plan_code=plan_code,
         plan_name=plan["name"],
         description=f"Subscription to {plan['name']}",
-        price_monthly=float(plan["price_monthly"]),
-        currency="SAR"
+        amount=amount,
+        currency=_resolve_paypal_currency(plan["currency"]),
+        billing_period=billing_period,
+        app_url=app_url,
     )
 
     if not paypal_plan:
         raise HTTPException(status_code=500, detail="Failed to create PayPal billing plan")
 
-    paypal_plan_id = paypal_plan["id"]
-
     # Create PayPal subscription agreement
     subscription = paypal_service.create_subscription(
-        plan_id=paypal_plan_id,
+        plan_id=paypal_plan["id"],
         payer_email=user.email,
-        metadata={"tenant_id": str(tenant_id), "plan_code": plan_code}
+        metadata={
+            "tenant_id": str(tenant_id),
+            "plan_code": plan_code,
+            "billing_period": billing_period,
+        },
     )
 
     if not subscription:
         raise HTTPException(status_code=500, detail="Failed to create PayPal subscription")
 
-    # Store the agreement ID temporarily for execution
-    # In production, you'd store this in a pending_subscriptions table
     await db.execute(
         text("""
             INSERT INTO pending_subscriptions (tenant_id, plan_id, provider, provider_agreement_id, payer_email, metadata)
-            VALUES (:tid, (SELECT id FROM plans WHERE code = :plan_code), 'paypal', :agreement_id, :email, :metadata::jsonb)
+            VALUES (:tid, (SELECT id FROM plans WHERE code = :plan_code), 'paypal', :agreement_id, :email, CAST(:metadata AS jsonb))
         """),
         {
             "tid": str(tenant_id),
             "plan_code": plan_code,
             "agreement_id": subscription["id"],
             "email": user.email,
-            "metadata": json.dumps({"tenant_id": str(tenant_id), "plan_code": plan_code})
+            "metadata": json.dumps({
+                "tenant_id": str(tenant_id),
+                "plan_code": plan_code,
+                "plan_name": plan["name"],
+                "billing_period": billing_period,
+                "paypal_token": subscription.get("token"),
+                "app_url": app_url,
+            })
         }
     )
     await db.commit()
@@ -244,6 +248,71 @@ async def create_checkout_session(
         "session_id": subscription["id"],
         "token": subscription["token"]
     }
+
+
+@router.post("/subscriptions/change-plan")
+async def change_plan_without_checkout(
+    plan_code: str,
+    request: Request,
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Change to a non-paid plan without external checkout."""
+    tenant_id = get_tenant_id_from_header(request)
+    await require_permission(db, tenant_id, user.id, "settings.manage")
+
+    plan_result = await db.execute(
+        text("SELECT id, code, name, price_monthly, price_yearly FROM plans WHERE code = :code AND is_active = true"),
+        {"code": plan_code},
+    )
+    plan = plan_result.mappings().first()
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
+
+    if float(plan["price_monthly"] or 0) > 0 or float(plan["price_yearly"] or 0) > 0:
+        raise HTTPException(status_code=400, detail="Paid plans require checkout")
+
+    await db.execute(
+        text("UPDATE subscriptions SET status = 'canceled' WHERE tenant_id = :tid AND status IN ('active', 'trialing')"),
+        {"tid": str(tenant_id)},
+    )
+    await db.execute(
+        text("""
+            INSERT INTO subscriptions (tenant_id, plan_id, provider, provider_customer_id, provider_subscription_id, status, current_period_start, current_period_end)
+            VALUES (
+                :tid,
+                :plan_id,
+                'mock_bypass',
+                NULL,
+                NULL,
+                'active',
+                now(),
+                :current_period_end
+            )
+        """),
+        {
+            "tid": str(tenant_id),
+            "plan_id": str(plan["id"]),
+            "current_period_end": datetime.now(timezone.utc) + timedelta(days=365),
+        },
+    )
+    await db.execute(
+        text("UPDATE tenants SET plan = :plan_code, updated_at = now() WHERE id = :tid"),
+        {"plan_code": plan_code, "tid": str(tenant_id)},
+    )
+    await log_audit(
+        db,
+        tenant_id=tenant_id,
+        actor_user_id=user.id,
+        action="subscription.change_internal",
+        resource_type="subscription",
+        resource_id=str(tenant_id),
+        metadata={"plan_code": plan_code},
+        ip_address=request.client.host if request.client else None,
+    )
+    await db.commit()
+
+    return {"message": "Plan changed successfully", "plan_code": plan_code}
 
 
 # ── Execute PayPal Subscription ──
@@ -262,10 +331,14 @@ async def execute_paypal_subscription(
     pending_result = await db.execute(
         text("""
             SELECT * FROM pending_subscriptions
-            WHERE provider_agreement_id = :agreement_id AND tenant_id = :tid
+            WHERE tenant_id = :tid
+              AND (
+                provider_agreement_id = :lookup_value
+                OR metadata->>'paypal_token' = :lookup_value
+              )
             ORDER BY created_at DESC LIMIT 1
         """),
-        {"agreement_id": token, "tid": str(tenant_id)},
+        {"lookup_value": token, "tid": str(tenant_id)},
     )
     pending = pending_result.mappings().first()
     if not pending:
@@ -275,6 +348,11 @@ async def execute_paypal_subscription(
     executed_sub = paypal_service.execute_subscription(token)
     if not executed_sub:
         raise HTTPException(status_code=500, detail="Failed to execute PayPal subscription")
+
+    pending_meta = pending["metadata"] or {}
+    billing_period = pending_meta.get("billing_period", "monthly")
+    period_days = 365 if billing_period == "yearly" else 30
+    current_period_end = datetime.now(timezone.utc) + timedelta(days=period_days)
 
     # Deactivate old active/trialing subscriptions
     await db.execute(
@@ -294,7 +372,7 @@ async def execute_paypal_subscription(
                 :subscription_id,
                 'active',
                 now(),
-                now() + INTERVAL '30 days'
+                :current_period_end
             )
         """),
         {
@@ -302,13 +380,14 @@ async def execute_paypal_subscription(
             "plan_id": str(pending["plan_id"]),
             "payer_email": executed_sub.get("payer_email", ""),
             "subscription_id": executed_sub["id"],
+            "current_period_end": current_period_end,
         },
     )
 
     # Update tenant plan column
     await db.execute(
         text("UPDATE tenants SET plan = :plan_code, updated_at = now() WHERE id = :tid"),
-        {"plan_code": pending["metadata"].get("plan_code", "starter"), "tid": str(tenant_id)}
+        {"plan_code": pending_meta.get("plan_code", "starter"), "tid": str(tenant_id)}
     )
 
     # Delete pending subscription
@@ -324,12 +403,21 @@ async def execute_paypal_subscription(
         action="subscription.upgrade_paypal",
         resource_type="subscription",
         resource_id=str(tenant_id),
-        metadata={"paypal_subscription_id": executed_sub["id"]},
+        metadata={
+            "paypal_subscription_id": executed_sub["id"],
+            "plan_code": pending_meta.get("plan_code"),
+            "billing_period": billing_period,
+        },
         ip_address=request.client.host if request.client else None,
     )
     await db.commit()
 
-    return {"message": "Subscription activated successfully", "subscription_id": executed_sub["id"]}
+    return {
+        "message": "Subscription activated successfully",
+        "subscription_id": executed_sub["id"],
+        "plan_code": pending_meta.get("plan_code"),
+        "billing_period": billing_period,
+    }
 
 
 # ── Cancel Subscription ──
@@ -365,7 +453,9 @@ async def cancel_subscription(
         )
     elif sub["provider"] == "paypal" and sub["provider_subscription_id"]:
         # Cancel in PayPal
-        paypal_service.cancel_subscription(sub["provider_subscription_id"])
+        canceled = paypal_service.cancel_subscription(sub["provider_subscription_id"])
+        if not canceled:
+            raise HTTPException(status_code=502, detail="Failed to cancel PayPal subscription")
 
     await db.execute(
         text("UPDATE subscriptions SET cancel_at_period_end = true WHERE id = :id"),
