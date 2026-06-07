@@ -125,8 +125,8 @@ async def get_current_subscription(
 @router.post("/subscriptions/checkout")
 async def create_checkout_session(
     plan_code: str,
-    payment_provider: str = "paypal",
     request: Request,
+    payment_provider: str = "paypal",
     user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
