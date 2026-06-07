@@ -26,6 +26,7 @@ class RegistrationFormRead(BaseModel):
     pending_approval_message_ar: Optional[str] = None
     pending_approval_message_en: Optional[str] = None
     fields: List[RegistrationFormField] = []
+    expires_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 
@@ -39,6 +40,7 @@ class RegistrationFormCreate(BaseModel):
     pending_approval_message_ar: Optional[str] = None
     pending_approval_message_en: Optional[str] = None
     fields: List[RegistrationFormField] = []
+    expires_at: Optional[datetime] = None
 
 class RegistrationFormUpdate(BaseModel):
     is_enabled: Optional[bool] = None
@@ -50,6 +52,7 @@ class RegistrationFormUpdate(BaseModel):
     pending_approval_message_ar: Optional[str] = None
     pending_approval_message_en: Optional[str] = None
     fields: Optional[List[RegistrationFormField]] = None
+    expires_at: Optional[datetime] = None
 
 class PublicRegistrationSubmit(BaseModel):
     guest_name: str = Field(..., min_length=1)

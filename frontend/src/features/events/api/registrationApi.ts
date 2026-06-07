@@ -6,7 +6,7 @@ import http from '@services/http/client'
 
 export interface RegistrationFormField {
   id: string
-  type: 'text' | 'number' | 'email' | 'phone' | 'select' | 'multiselect' | 'checkbox_group' | 'radio_group' | 'date' | 'checkbox'
+  type: 'text' | 'number' | 'email' | 'phone' | 'select' | 'multiselect' | 'checkbox_group' | 'radio_group' | 'date' | 'checkbox' | 'image' | 'text_block'
   label: string
   label_en?: string
   required: boolean
@@ -28,6 +28,7 @@ export interface RegistrationFormRead {
   pending_approval_message_ar?: string
   pending_approval_message_en?: string
   fields: RegistrationFormField[]
+  expires_at?: string | null
   created_at: string
   updated_at: string
 }
@@ -42,6 +43,7 @@ export interface RegistrationFormCreate {
   pending_approval_message_ar?: string | null
   pending_approval_message_en?: string | null
   fields: RegistrationFormField[]
+  expires_at?: string | null
 }
 
 export interface PublicRegistrationSubmit {

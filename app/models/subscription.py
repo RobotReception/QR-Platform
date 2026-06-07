@@ -5,10 +5,17 @@ from datetime import datetime
 from enum import Enum
 
 __all__ = [
+    "PaymentProvider",
     "SubscriptionStatus",
     "SubscriptionRead",
     "SubscriptionWithPlan",
 ]
+
+
+class PaymentProvider(str, Enum):
+    stripe = "stripe"
+    paypal = "paypal"
+    mock_bypass = "mock_bypass"
 
 
 class SubscriptionStatus(str, Enum):
@@ -24,7 +31,7 @@ class SubscriptionRead(BaseModel):
     id: UUID
     tenant_id: UUID
     plan_id: UUID
-    provider: str
+    provider: PaymentProvider
     provider_customer_id: Optional[str] = None
     provider_subscription_id: Optional[str] = None
     status: SubscriptionStatus

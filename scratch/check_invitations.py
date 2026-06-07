@@ -1,22 +1,20 @@
 import asyncio
-import json
+from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy import text
-from app.database import AsyncSessionLocal
+from app.config import get_settings
 
-async def check():
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(text("SELECT id, guest_name, ticket_class, status, rsvp_status, metadata FROM invitations ORDER BY created_at DESC LIMIT 20"))
-        rows = result.mappings().all()
-        for r in rows:
-            meta = r['metadata'] or {}
-            # Print as JSON dump to avoid encoding errors in CP1252 terminal
-            print(json.dumps({
-                "id": str(r['id']),
-                "guest_name": r['guest_name'],
-                "status": r['status'],
-                "rsvp_status": r['rsvp_status'],
-                "metadata": meta
-            }, ensure_ascii=False))
+async def main():
+    settings = get_settings()
+    engine = create_async_engine(settings.database_url)
+    async with engine.connect() as conn:
+        print("--- Checking invitations table columns ---")
+        res = await conn.execute(text("SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'invitations'"))
+        for row in res:
+            print(f'{row[0]}: {row[1]}')
+        
+        print("\n--- Checking recent invitations data ---")
+        data_res = await conn.execute(text("SELECT id, guest_name, rsvp_status, status, is_registration, created_at FROM invitations ORDER BY created_at DESC LIMIT 10"))
+        for row in data_res.mappings().all():
+            print(dict(row))
 
-if __name__ == '__main__':
-    asyncio.run(check())
+asyncio.run(main())

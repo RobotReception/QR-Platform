@@ -177,12 +177,16 @@ class EventGateRead(BaseModel):
     allowed_classes: Optional[list] = None
     is_active: bool
     created_at: datetime
+    team_id: Optional[UUID] = None
+    assigned_users: list[UUID] = []
 
 
 class EventGateCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     name_ar: Optional[str] = None
     allowed_classes: list[str] = ["normal", "vip"]
+    team_id: Optional[UUID] = None
+    assigned_users: Optional[list[UUID]] = None
 
 
 # ── Event Stats ──

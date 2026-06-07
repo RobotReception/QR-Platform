@@ -13,7 +13,8 @@ import {
 import { useInvitationsList, useUpdateInvitation } from '@features/invitations/hooks/useInvitations'
 import type { RsvpStatus, TicketClass, Invitation } from '@features/invitations/types'
 import { RsvpDetailPanel } from './RsvpDetailPanel'
-import './event-rsvp-tab.css' // Reuse the same luxury CSS styling
+import './event-rsvp-tab.css'
+import { Can, PERM } from '@shared/permissions' // Reuse the same luxury CSS styling
 
 interface Props {
   event: {
@@ -271,14 +272,16 @@ export function EventFinalInvitationsTab({ event }: Props) {
             <option value="not_checked_in">لم يحضر بعد</option>
           </select>
 
-          <button
-            className="btn btn-ghost"
-            onClick={handleExportCSV}
-            disabled={filtered.length === 0}
-          >
-            <Download size={15} />
-            <span>تصدير القائمة Excel</span>
-          </button>
+          <Can permission={PERM.INV_EXPORT}>
+            <button
+              className="btn btn-ghost"
+              onClick={handleExportCSV}
+              disabled={filtered.length === 0}
+            >
+              <Download size={15} />
+              <span>تصدير القائمة Excel</span>
+            </button>
+          </Can>
         </div>
       </div>
 
@@ -350,6 +353,12 @@ export function EventFinalInvitationsTab({ event }: Props) {
                               <button
                                 className="rsvp-action-icon"
                                 onClick={async () => {
+                                  const phone = (inv.guest_phone || '').trim()
+                                  const email = (inv.guest_email || '').trim()
+                                  if (!phone && !email) {
+                                    alert('لا يمكن تحويل الدعوة لطلب RSVP لعدم وجود بيانات اتصال (رقم هاتف أو بريد إلكتروني) للضيف.')
+                                    return
+                                  }
                                   if (window.confirm(`هل أنت متأكد من تحويل الدعوة "${inv.guest_name_ar || inv.guest_name}" لطلب RSVP ونقلها لتاب تأكيد الحضور؟`)) {
                                     setUpdatingId(inv.id);
                                     try {

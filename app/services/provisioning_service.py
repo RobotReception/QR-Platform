@@ -55,6 +55,7 @@ async def provision_tenant_manual(
         text("""
             INSERT INTO role_permissions (role_id, permission_key)
             SELECT :rid, key FROM permissions
+            ON CONFLICT DO NOTHING
         """),
         {"rid": str(admin_role_id)},
     )
@@ -85,6 +86,22 @@ async def provision_tenant_manual(
                 'teams.view', 'gates.view',
                 'batches.create', 'batches.view'
             )
+            ON CONFLICT DO NOTHING
+        """),
+        {"rid": str(member_role_id)},
+    )
+    await db.execute(
+        text("""
+            INSERT INTO role_permissions (role_id, permission_key)
+            SELECT :rid, key FROM permissions
+            WHERE key LIKE 'ui.%'
+              AND key NOT IN (
+                'ui.event.action.delete', 'ui.gates.action.delete',
+                'ui.invitations.action.revoke', 'ui.templates.action.delete',
+                'ui.members.action.create', 'ui.members.action.edit', 'ui.members.action.delete',
+                'ui.roles.action.manage', 'ui.teams.action.archive'
+              )
+            ON CONFLICT DO NOTHING
         """),
         {"rid": str(member_role_id)},
     )
@@ -109,6 +126,20 @@ async def provision_tenant_manual(
                 'files.upload', 'files.view',
                 'events.view', 'invitations.view', 'tenant.view'
             )
+            ON CONFLICT DO NOTHING
+        """),
+        {"rid": str(designer_role_id)},
+    )
+    await db.execute(
+        text("""
+            INSERT INTO role_permissions (role_id, permission_key)
+            SELECT :rid, key FROM permissions
+            WHERE key IN (
+                'ui.nav.dashboard', 'ui.nav.events',
+                'ui.event.tab.analytics', 'ui.event.tab.templates', 'ui.event.tab.settings',
+                'ui.templates.action.create', 'ui.templates.action.edit', 'ui.templates.action.design'
+            )
+            ON CONFLICT DO NOTHING
         """),
         {"rid": str(designer_role_id)},
     )
@@ -133,6 +164,20 @@ async def provision_tenant_manual(
                 'events.view', 'invitations.view', 'guests.view',
                 'gates.view', 'tenant.view'
             )
+            ON CONFLICT DO NOTHING
+        """),
+        {"rid": str(checkin_role_id)},
+    )
+    await db.execute(
+        text("""
+            INSERT INTO role_permissions (role_id, permission_key)
+            SELECT :rid, key FROM permissions
+            WHERE key IN (
+                'ui.nav.dashboard', 'ui.nav.checkin', 'ui.nav.events',
+                'ui.event.tab.analytics',
+                'ui.checkin.action.scan', 'ui.checkin.action.manual'
+            )
+            ON CONFLICT DO NOTHING
         """),
         {"rid": str(checkin_role_id)},
     )
@@ -159,6 +204,19 @@ async def provision_tenant_manual(
                 'checkin.view', 'templates.view', 'teams.view', 'gates.view',
                 'batches.view'
             )
+            ON CONFLICT DO NOTHING
+        """),
+        {"rid": str(viewer_role_id)},
+    )
+    await db.execute(
+        text("""
+            INSERT INTO role_permissions (role_id, permission_key)
+            SELECT :rid, key FROM permissions
+            WHERE key IN (
+                'ui.nav.dashboard', 'ui.nav.events', 'ui.nav.invitations', 'ui.nav.checkin',
+                'ui.event.tab.analytics', 'ui.event.tab.rsvp', 'ui.event.tab.final', 'ui.event.tab.barcodes'
+            )
+            ON CONFLICT DO NOTHING
         """),
         {"rid": str(viewer_role_id)},
     )

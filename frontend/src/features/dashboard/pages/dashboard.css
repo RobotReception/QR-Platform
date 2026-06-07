@@ -25,13 +25,45 @@
   border-left: 1px solid var(--color-border);
   background: rgba(15,23,42,0.82);
   backdrop-filter: blur(18px);
+  display: flex;
+  flex-direction: column;
 }
 
-.dash-brand { display: flex; align-items: center; gap: 12px; padding: 10px 8px 28px; }
+.dash-brand { display: flex; align-items: center; gap: 12px; padding: 10px 8px 16px; }
+
+.dash-tenant-switcher {
+  margin: 0 8px 20px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(201,169,110,0.15);
+  background: rgba(15,23,42,0.6);
+}
+.dash-tenant-switcher__label {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; color: var(--color-text-muted);
+  margin-bottom: 8px;
+}
+.dash-tenant-switcher__single {
+  font-size: 13px; font-weight: 600; color: var(--color-text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dash-tenant-switcher__select-wrap { position: relative; }
+.dash-tenant-switcher__select {
+  width: 100%; appearance: none;
+  padding: 8px 28px 8px 10px;
+  border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(0,0,0,0.25); color: var(--color-text);
+  font-family: inherit; font-size: 13px; cursor: pointer;
+}
+.dash-tenant-switcher__icon {
+  position: absolute; left: 10px; top: 50%;
+  transform: translateY(-50%); pointer-events: none;
+  color: var(--color-text-muted);
+}
 .dash-brand img { width: 42px; height: 42px; object-fit: contain; }
 .dash-brand strong { display: block; font-size: 18px; }
 .dash-brand span { display: block; color: var(--color-text-muted); font-size: 12px; font-family: var(--font-en); }
-
+ 
 .dash-nav { display: grid; gap: 6px; }
 .dash-nav__item {
   min-height: 44px; display: flex; align-items: center; gap: 10px;
@@ -49,6 +81,30 @@
 .dash-nav__item--active {
   border-right: 3px solid var(--color-primary);
   background: rgba(201,169,110,0.12);
+}
+
+button.dash-nav__item {
+  background: transparent;
+  width: 100%;
+  font-family: inherit;
+  font-size: inherit;
+  text-align: inherit;
+}
+
+.dash-nav__item--danger {
+  color: var(--color-text-muted);
+}
+
+.dash-nav__item--danger:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.18);
+}
+
+.dash-sidebar__footer {
+  margin-top: auto;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .dash-main {

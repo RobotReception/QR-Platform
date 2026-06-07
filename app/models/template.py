@@ -16,6 +16,7 @@ class ElementType(str, Enum):
     event_date = "event_date"
     event_time = "event_time"
     event_location = "event_location"
+    event_address = "event_address"
     qr_code = "qr_code"
     barcode = "barcode"
     seat_number = "seat_number"

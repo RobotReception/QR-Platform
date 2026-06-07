@@ -6,7 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
-from app.auth import get_current_user, CurrentUser
+from app.auth import get_current_user, get_tenant_id_from_header, CurrentUser
+from app.services.permission_service import require_permission
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -31,9 +32,8 @@ async def get_dashboard_analytics(
     Comprehensive tenant dashboard analytics.
     Each section is queried separately for resilience.
     """
-    tenant_id = request.headers.get("X-Tenant-ID")
-    if not tenant_id:
-        raise HTTPException(status_code=400, detail="X-Tenant-ID header required")
+    tenant_id = get_tenant_id_from_header(request)
+    await require_permission(db, tenant_id, user.id, "reports.view")
 
     analytics = {}
     p = {"tid": tenant_id}

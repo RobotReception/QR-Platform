@@ -13,6 +13,7 @@ from app.auth import get_current_user, get_tenant_id_from_header, CurrentUser
 from app.database import get_db
 from app.services.membership_service import verify_membership
 from app.services.permission_service import require_permission
+from app.services.staff_service import is_staff_user
 from app.services.audit_service import log_audit
 
 router = APIRouter(prefix="/roles", tags=["Roles & Permissions"])
@@ -47,6 +48,28 @@ class RoleUpdate(BaseModel):
     permissions: Optional[list[str]] = None
 
 
+# ── Current User Permissions ──
+@router.get("/me/permissions", response_model=list[str])
+async def get_my_permissions(
+    request: Request,
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return all permission keys for the current user in the current tenant."""
+    from app.services.permission_service import get_user_permissions
+    tenant_id = get_tenant_id_from_header(request)
+    await verify_membership(db, tenant_id, user.id)
+    return await get_user_permissions(db, tenant_id, user.id)
+
+
+async def _require_platform_staff_for_role_admin(db: AsyncSession, user_id) -> None:
+    if not await is_staff_user(db, user_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="إدارة الأدوار والصلاحيات مخصصة لمشرفي المنصة فقط",
+        )
+
+
 # ── List All System Permissions ──
 @router.get("/permissions", response_model=list[PermissionRead])
 async def list_permissions(
@@ -54,9 +77,8 @@ async def list_permissions(
     user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all available permissions in the system."""
-    tenant_id = get_tenant_id_from_header(request)
-    await require_permission(db, tenant_id, user.id, "roles.view")
+    """List all available permissions in the system. Platform staff only."""
+    await _require_platform_staff_for_role_admin(db, user.id)
 
     result = await db.execute(
         text("SELECT key, description FROM permissions ORDER BY key")
@@ -72,23 +94,36 @@ async def list_roles(
     user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all roles in the current tenant (system + custom)."""
+    """List roles in the current tenant (names only for org members; full for platform staff)."""
     tenant_id = get_tenant_id_from_header(request)
-    await require_permission(db, tenant_id, user.id, "roles.view")
+    await verify_membership(db, tenant_id, user.id)
 
-    result = await db.execute(
-        text("""
-            SELECT r.id, r.tenant_id, r.name, r.description, r.is_system_role,
-                   r.created_at::text,
-                   ARRAY(
-                       SELECT rp.permission_key FROM role_permissions rp WHERE rp.role_id = r.id
-                   ) AS permissions
-            FROM roles r
-            WHERE r.tenant_id = :tid
-            ORDER BY r.is_system_role DESC, r.name
-        """),
-        {"tid": str(tenant_id)},
-    )
+    staff = await is_staff_user(db, user.id)
+    if staff:
+        result = await db.execute(
+            text("""
+                SELECT r.id, r.tenant_id, r.name, r.description, r.is_system_role,
+                       r.created_at::text,
+                       ARRAY(
+                           SELECT rp.permission_key FROM role_permissions rp WHERE rp.role_id = r.id
+                       ) AS permissions
+                FROM roles r
+                WHERE r.tenant_id = :tid
+                ORDER BY r.is_system_role DESC, r.name
+            """),
+            {"tid": str(tenant_id)},
+        )
+    else:
+        result = await db.execute(
+            text("""
+                SELECT r.id, r.tenant_id, r.name, r.description, r.is_system_role,
+                       r.created_at::text, NULL::text[] AS permissions
+                FROM roles r
+                WHERE r.tenant_id = :tid
+                ORDER BY r.is_system_role DESC, r.name
+            """),
+            {"tid": str(tenant_id)},
+        )
     rows = result.mappings().all()
     return [RoleRead(**dict(r)) for r in rows]
 
@@ -101,22 +136,34 @@ async def get_role(
     user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get details of a specific role including its permissions."""
+    """Get role details. Permission list visible to platform staff only."""
     tenant_id = get_tenant_id_from_header(request)
-    await require_permission(db, tenant_id, user.id, "roles.view")
+    await verify_membership(db, tenant_id, user.id)
+    staff = await is_staff_user(db, user.id)
 
-    result = await db.execute(
-        text("""
-            SELECT r.id, r.tenant_id, r.name, r.description, r.is_system_role,
-                   r.created_at::text,
-                   ARRAY(
-                       SELECT rp.permission_key FROM role_permissions rp WHERE rp.role_id = r.id
-                   ) AS permissions
-            FROM roles r
-            WHERE r.id = :rid AND r.tenant_id = :tid
-        """),
-        {"rid": str(role_id), "tid": str(tenant_id)},
-    )
+    if staff:
+        result = await db.execute(
+            text("""
+                SELECT r.id, r.tenant_id, r.name, r.description, r.is_system_role,
+                       r.created_at::text,
+                       ARRAY(
+                           SELECT rp.permission_key FROM role_permissions rp WHERE rp.role_id = r.id
+                       ) AS permissions
+                FROM roles r
+                WHERE r.id = :rid AND r.tenant_id = :tid
+            """),
+            {"rid": str(role_id), "tid": str(tenant_id)},
+        )
+    else:
+        result = await db.execute(
+            text("""
+                SELECT r.id, r.tenant_id, r.name, r.description, r.is_system_role,
+                       r.created_at::text, NULL::text[] AS permissions
+                FROM roles r
+                WHERE r.id = :rid AND r.tenant_id = :tid
+            """),
+            {"rid": str(role_id), "tid": str(tenant_id)},
+        )
     row = result.mappings().first()
     if not row:
         raise HTTPException(status_code=404, detail="الدور غير موجود")
@@ -131,9 +178,9 @@ async def create_role(
     user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create a custom role for the current tenant."""
+    """Create a custom role. Platform staff only — use /platform/tenants/{id}/roles."""
     tenant_id = get_tenant_id_from_header(request)
-    await require_permission(db, tenant_id, user.id, "roles.manage")
+    await _require_platform_staff_for_role_admin(db, user.id)
 
     # Check name uniqueness within tenant
     existing = await db.execute(
@@ -193,9 +240,9 @@ async def update_role(
     user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update a custom role. System roles cannot be modified."""
+    """Update a role. Platform staff only — use /platform/tenants/{id}/roles/{role_id}."""
     tenant_id = get_tenant_id_from_header(request)
-    await require_permission(db, tenant_id, user.id, "roles.manage")
+    await _require_platform_staff_for_role_admin(db, user.id)
 
     # Check role exists and is not system role
     existing = await db.execute(
@@ -205,12 +252,13 @@ async def update_role(
     role_row = existing.mappings().first()
     if not role_row:
         raise HTTPException(status_code=404, detail="الدور غير موجود")
-    if role_row["is_system_role"]:
-        raise HTTPException(status_code=403, detail="لا يمكن تعديل الأدوار النظامية")
+    is_system = role_row["is_system_role"]
 
-    # Update name/description
+    # System roles: only permissions may be updated (not name/description)
     updates = body.model_dump(exclude_unset=True, exclude={"permissions"})
     if updates:
+        if is_system:
+            raise HTTPException(status_code=403, detail="لا يمكن تعديل اسم أو وصف الأدوار النظامية")
         set_clauses = ", ".join(f"{k} = :{k}" for k in updates)
         updates["rid"] = str(role_id)
         await db.execute(
@@ -271,9 +319,9 @@ async def delete_role(
     user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete a custom role. System roles cannot be deleted."""
+    """Delete a custom role. Platform staff only."""
     tenant_id = get_tenant_id_from_header(request)
-    await require_permission(db, tenant_id, user.id, "roles.manage")
+    await _require_platform_staff_for_role_admin(db, user.id)
 
     existing = await db.execute(
         text("SELECT id, is_system_role FROM roles WHERE id = :rid AND tenant_id = :tid"),

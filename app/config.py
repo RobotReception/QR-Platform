@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
 
+    # PayPal
+    paypal_client_id: str = ""
+    paypal_client_secret: str = ""
+    paypal_mode: str = "sandbox"
+
     # SMTP
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587

@@ -45,6 +45,15 @@ async def create_team(
     tenant_id = get_tenant_id_from_header(request)
     await require_permission(db, tenant_id, user.id, "teams.manage")
 
+    # ── Plan limit: teams_max ──
+    from app.services.feature_service import enforce_static_limit
+    teams_count_res = await db.execute(
+        text("SELECT COUNT(*) FROM teams WHERE tenant_id = :tid"),
+        {"tid": str(tenant_id)},
+    )
+    current_teams = teams_count_res.scalar() or 0
+    await enforce_static_limit(db, tenant_id, "teams_max", current_teams, "الفرق")
+
     leader_id = body.leader_id or user.id
 
     # Verify leader is in org
@@ -246,6 +255,15 @@ async def add_team_member(
 ):
     tenant_id = get_tenant_id_from_header(request)
     await require_permission(db, tenant_id, user.id, "teams.manage")
+
+    # ── Plan limit: team_members_per_team ──
+    from app.services.feature_service import enforce_static_limit
+    members_count_res = await db.execute(
+        text("SELECT COUNT(*) FROM team_memberships WHERE team_id = :tid"),
+        {"tid": str(team_id)},
+    )
+    current_members = members_count_res.scalar() or 0
+    await enforce_static_limit(db, tenant_id, "team_members_per_team", current_members, "أعضاء الفريق")
 
     # Verify user is a member of the org
     check = await db.execute(

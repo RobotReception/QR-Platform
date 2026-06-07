@@ -10,7 +10,7 @@ from app.database import get_db
 from app.models.tenant import TenantCreate, TenantRead, TenantUpdate, TenantSettingRead, TenantSettingWrite, TenantDomainRead, TenantDomainCreate
 import json
 from app.models.membership import MembershipRead, MemberWithProfile, MembershipUpdate
-from app.services.membership_service import verify_membership, require_admin, require_owner
+from app.services.membership_service import verify_membership, require_owner
 from app.services.audit_service import log_audit
 from app.services.provisioning_service import provision_tenant_manual
 from app.services.permission_service import require_permission
@@ -66,7 +66,7 @@ async def create_tenant(
             INSERT INTO subscriptions (tenant_id, plan_id, status, current_period_start, current_period_end, trial_ends_at)
             VALUES (
                 :tenant_id,
-                (SELECT id FROM plans WHERE code = 'free'),
+                (SELECT id FROM plans WHERE code = 'starter'),
                 'active',
                 now(),
                 now() + INTERVAL '30 days',
@@ -145,9 +145,9 @@ async def update_tenant(
     user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update tenant details. Requires admin role."""
+    """Update tenant details."""
     tenant_id = get_tenant_id_from_header(request)
-    await require_admin(db, tenant_id, user.id)
+    await require_permission(db, tenant_id, user.id, "settings.manage")
 
     updates = body.model_dump(exclude_unset=True)
     if not updates:
@@ -242,6 +242,32 @@ async def update_member(
     row = result.mappings().first()
     if not row:
         raise HTTPException(status_code=404, detail="Member not found")
+
+    # If the role was updated, update membership_roles as well
+    if "role" in updates:
+        new_role = updates["role"]
+        # 1. Delete current membership roles
+        await db.execute(
+            text("DELETE FROM membership_roles WHERE tenant_id = :tid AND user_id = :uid"),
+            {"tid": str(tenant_id), "uid": str(member_id)},
+        )
+        # 2. Insert new matching role
+        role_map = {"owner": "Admin", "admin": "Admin", "member": "Member", "viewer": "Viewer"}
+        rbac_role_name = role_map.get(new_role, "Member")
+        role_result = await db.execute(
+            text("SELECT id FROM roles WHERE tenant_id = :tid AND name = :name LIMIT 1"),
+            {"tid": str(tenant_id), "name": rbac_role_name},
+        )
+        rbac_role = role_result.scalar()
+        if rbac_role:
+            await db.execute(
+                text("""
+                    INSERT INTO membership_roles (tenant_id, user_id, role_id)
+                    VALUES (:tid, :uid, :rid)
+                    ON CONFLICT DO NOTHING
+                """),
+                {"tid": str(tenant_id), "uid": str(member_id), "rid": str(rbac_role)},
+            )
 
     await log_audit(
         db,
@@ -369,6 +395,24 @@ async def create_member(
         """),
         {"tid": str(tenant_id), "uid": new_user_id, "role": body.role},
     )
+
+    # Assign matching role in membership_roles
+    role_map = {"owner": "Admin", "admin": "Admin", "member": "Member", "viewer": "Viewer"}
+    rbac_role_name = role_map.get(body.role, "Member")
+    role_result = await db.execute(
+        text("SELECT id FROM roles WHERE tenant_id = :tid AND name = :name LIMIT 1"),
+        {"tid": str(tenant_id), "name": rbac_role_name},
+    )
+    rbac_role = role_result.scalar()
+    if rbac_role:
+        await db.execute(
+            text("""
+                INSERT INTO membership_roles (tenant_id, user_id, role_id)
+                VALUES (:tid, :uid, :rid)
+                ON CONFLICT DO NOTHING
+            """),
+            {"tid": str(tenant_id), "uid": new_user_id, "rid": str(rbac_role)},
+        )
 
     await log_audit(
         db, tenant_id=tenant_id, actor_user_id=user.id,

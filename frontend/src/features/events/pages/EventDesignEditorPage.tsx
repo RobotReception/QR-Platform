@@ -7,9 +7,10 @@ import QRCode from 'qrcode'
 import * as XLSX from 'xlsx'
 import { templatesApi, type TemplateElementCreateRequest, type TemplateElementType } from '../api/templatesApi'
 import { WorkspaceShell } from '@features/workspace/components/WorkspaceShell'
+import { Can, PERM, usePermission } from '@shared/permissions'
 import './events.css'
 
-type EditorMode = 'count' | 'excel'
+
 
 type EditorElement = TemplateElementCreateRequest & {
   id: string
@@ -46,7 +47,6 @@ const ELEMENT_PRESETS: ElementPreset[] = [
     type: 'dynamic_text',
     label: 'نص ديناميكي',
     icon: Database,
-    excelOnly: true,
     defaults: { x: 0.5, y: 0.15, width: 0.4, height: 0.029, font_size: 28, font_color: '#ffffff', text_align: 'center', data_key: '' },
   },
   {
@@ -62,6 +62,7 @@ const ELEMENT_PRESETS: ElementPreset[] = [
     defaults: { x: 0.5, y: 0.5, width: 0.15, height: 0.15, static_content: '' },
   },
 ]
+
 
 function createDefaultElement(type: TemplateElementType, index: number): EditorElement {
   const preset = ELEMENT_PRESETS.find((item) => item.type === type)
@@ -237,10 +238,11 @@ export default function EventDesignEditorPage() {
   const { eventId } = useParams<{ eventId: string }>()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
-  const [editorMode, setEditorMode] = useState<EditorMode>(() => searchParams.get('mode') === 'excel' ? 'excel' : 'count')
+
   const editTemplateId = searchParams.get('edit') // If editing existing template
   const currentTenantId = useAuthStore((s) => s.currentTenantId)
   const { data: event, isLoading } = useEventDetail(currentTenantId, eventId)
+  const canDesign = usePermission(PERM.TMPL_DESIGN)
 
   const [excelColumns, setExcelColumns] = useState<string[]>(() => {
     try {
@@ -255,11 +257,8 @@ export default function EventDesignEditorPage() {
   })
   const [isManualKey, setIsManualKey] = useState(false)
 
-  // Filter presets based on mode
-  const availablePresets = useMemo(() =>
-    ELEMENT_PRESETS.filter((p) => !p.excelOnly || editorMode === 'excel'),
-    [editorMode],
-  )
+  // All presets are always available to maintain visual symmetry (2x2 grid)
+  const availablePresets = ELEMENT_PRESETS
 
   const [templateName, setTemplateName] = useState(`تصميم مخصص`)
   const [activeTab, setActiveTab] = useState<'vip' | 'normal'>(() => {
@@ -396,10 +395,7 @@ export default function EventDesignEditorPage() {
         if (cancelled) return
 
         if (elems && elems.length > 0) {
-          const hasDynamic = elems.some((e: any) => e.element_type === 'dynamic_text' || e.element_type === 'guest_name')
-          if (hasDynamic) {
-            setEditorMode('excel')
-          }
+
           const mapped: EditorElement[] = elems.map((e: any, i: number) => ({
             id: e.id || `elem-${i}-${Date.now()}`,
             element_type: e.element_type,
@@ -759,6 +755,7 @@ export default function EventDesignEditorPage() {
   }, [canvasHeight, canvasWidth, elements, viewTransform.panX, viewTransform.panY, viewTransform.zoom])
 
   const addElement = (type: TemplateElementType) => {
+
     const next = createDefaultElement(type, elements.length)
     const preset = ELEMENT_PRESETS.find((p) => p.type === type)
     const typeCount = elements.filter((e) => e.element_type === type).length
@@ -1111,6 +1108,16 @@ export default function EventDesignEditorPage() {
      )
   }
 
+  if (!canDesign) {
+    return (
+      <WorkspaceShell title="غير مصرح" subtitle="">
+        <div className="center-loader">
+          ليس لديك صلاحية لاستخدام محرر التصميم. تواصل مع مسؤول المؤسسة.
+        </div>
+      </WorkspaceShell>
+    )
+  }
+
   return (
     <WorkspaceShell
       title={editingTemplateId ? 'تحرير التصميم' : 'محرر تصميم الدعوات'}
@@ -1122,10 +1129,12 @@ export default function EventDesignEditorPage() {
                 <ArrowRight size={16} style={{ marginLeft: 6 }} />
                 {editingTemplateId ? 'إلغاء والعودة' : 'إلغاء والعودة'}
             </button>
-            <button className="btn btn-primary" onClick={handleSave} disabled={isSaving || isUploadingAsset}>
-                <Save size={16} />
-                {isSaving ? 'جاري الحفظ...' : isUploadingAsset ? 'جاري رفع الشعار...' : editingTemplateId ? 'حفظ التعديلات' : 'حفظ التصميم'}
-            </button>
+            <Can permission={PERM.TMPL_DESIGN}>
+              <button className="btn btn-primary" onClick={handleSave} disabled={isSaving || isUploadingAsset}>
+                  <Save size={16} />
+                  {isSaving ? 'جاري الحفظ...' : isUploadingAsset ? 'جاري رفع الشعار...' : editingTemplateId ? 'حفظ التعديلات' : 'حفظ التصميم'}
+              </button>
+            </Can>
         </div>
       }
     >
@@ -1201,7 +1210,7 @@ export default function EventDesignEditorPage() {
                     sessionStorage.setItem(`excel_name_${eventId}`, file.name)
                     setModalAlert({
                       title: 'تم قراءة الملف بنجاح',
-                      message: `تم قراءة ${cols.length} أعمدة بنجاح من ملف ${file.name}`,
+                      message: `تم قراءة ${cols.length} أعمدة بنجاح من ملف ${file.name}${elements.some(e => e.element_type === 'dynamic_text' || e.element_type === 'guest_name') ? ' - يمكنك الآن تحميل نموذج الربط' : ''}`,
                       type: 'success'
                     })
                   } else {
@@ -1231,21 +1240,38 @@ export default function EventDesignEditorPage() {
 
 
           <label className="inv-label" style={{ marginTop: 16 }}>➕ إضافة عنصر جديد للبطاقة</label>
-          <div className="inv-design-toolbar">
+          <div className="inv-design-toolbar" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
             {availablePresets.map((preset) => {
               const Icon = preset.icon
               return (
-                <button key={preset.type} type="button" className="inv-design-tool" onClick={() => addElement(preset.type)} disabled={isSaving}>
-                  <Icon size={15} /> {preset.label}
+                <button
+                  key={preset.type}
+                  type="button"
+                  className="inv-design-tool"
+                  onClick={() => addElement(preset.type)}
+                  disabled={isSaving}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '6px',
+                    padding: '12px 6px',
+                    height: 'auto',
+                    borderRadius: '10px',
+                    textAlign: 'center',
+                    fontSize: '11px',
+                    fontWeight: 600,
+                  }}
+                >
+                  <Icon size={16} />
+                  <span>{preset.label}</span>
                 </button>
               )
             })}
           </div>
-          {editorMode === 'count' && (
-            <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4, opacity: 0.7 }}>
-              وضع العدد السريع (باركود فقط بدون نصوص أسماء). لتفعيل النصوص والأسماء، يرجى التبديل لوضع استيراد الإكسل.
-            </div>
-          )}
+
+
 
           <div className="inv-design-layers">
             <div className="inv-design-layers__head">
@@ -1423,6 +1449,7 @@ export default function EventDesignEditorPage() {
                           : element.element_type === 'event_date' ? 'السبت 28 / 6 / 2025'
                           : element.element_type === 'event_time' ? '07:00 مساءً'
                           : element.element_type === 'event_location' ? 'فندق الريتز كارلتون'
+                          : element.element_type === 'event_address' ? 'طريق الملك فهد، حي العليا'
                           : element.element_type === 'seat_number' ? 'A-12'
                           : element.static_content || element.label)
                         : (element.static_content || element.label || `{${element.data_key || element.element_type}}`)}
@@ -1464,14 +1491,7 @@ export default function EventDesignEditorPage() {
         </section>
 
         <aside className="inv-design-sidebar-right">
-          {/* Mode indicator */}
-          <div className="inv-design-mode-badge">
-            {editorMode === 'excel' ? (
-              <><Type size={13} /> وضع Excel — باركود + نصوص</>
-            ) : (
-              <><QrCode size={13} /> وضع العدد — باركودات فقط</>
-            )}
-          </div>
+
 
           {selectedElement ? (
             <div className="inv-design-inspector" style={{ background: 'transparent', border: 'none', padding: 0 }}>
@@ -1649,6 +1669,61 @@ export default function EventDesignEditorPage() {
                     onChange={(e) => updateSelected({ static_content: e.target.value })}
                     disabled={isSaving}
                   />
+                  {event && (
+                    <div style={{ marginTop: 8 }}>
+                      <label className="inv-label" style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 6, display: 'block' }}>
+                        ✨ إدراج سريع من بيانات الحفل:
+                      </label>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        {[
+                          { label: 'اسم الحفل', value: event.title_ar || event.title },
+                          {
+                            label: 'التاريخ',
+                            value: event.start_date
+                              ? new Date(event.start_date).toLocaleDateString('ar-SA', { year: 'numeric', month: '2-digit', day: '2-digit' })
+                              : '',
+                          },
+                          {
+                            label: 'اليوم',
+                            value: event.start_date
+                              ? new Date(event.start_date).toLocaleDateString('ar-SA', { weekday: 'long' })
+                              : '',
+                          },
+                          {
+                            label: 'الوقت',
+                            value: event.start_date
+                              ? new Date(event.start_date).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })
+                              : '',
+                          },
+                          { label: 'القاعة/المقر', value: event.venue_name_ar || event.venue_name || '' },
+                          { label: 'العنوان', value: event.venue_address || '' },
+                          { label: 'المدينة', value: event.venue_city || '' },
+                        ]
+                          .filter((item) => item.value)
+                          .map((item) => (
+                            <button
+                              key={item.label}
+                              type="button"
+                              className="btn btn-ghost"
+                              style={{
+                                fontSize: 9,
+                                padding: '3px 8px',
+                                height: 'auto',
+                                background: 'rgba(201, 169, 110, 0.08)',
+                                border: '1px solid rgba(201, 169, 110, 0.2)',
+                                color: '#C9A96E',
+                                borderRadius: 6,
+                                cursor: 'pointer',
+                              }}
+                              onClick={() => updateSelected({ static_content: item.value })}
+                              title={item.value}
+                            >
+                              {item.label}
+                            </button>
+                          ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1989,7 +2064,12 @@ export default function EventDesignEditorPage() {
         </aside>
       </div>
 
-      {showSaveSuccessModal && (
+      {showSaveSuccessModal && (() => {
+        const hasCustomFields = elements.some(el =>
+          (el.element_type === 'dynamic_text' || el.element_type === 'guest_name') &&
+          el.data_key && el.data_key.trim() !== ''
+        )
+        return (
         <div className="inv-quick-modal-overlay" role="dialog" aria-modal="true">
           <div className="inv-quick-modal" style={{ width: '460px', padding: '24px' }}>
             <div className="inv-quick-modal__header">
@@ -1998,34 +2078,39 @@ export default function EventDesignEditorPage() {
                   <span style={{ fontSize: '24px' }}>✓</span> تم حفظ التصميم بنجاح!
                 </h3>
                 <p style={{ marginTop: '8px', fontSize: '13px', lineHeight: '1.6', color: 'rgba(255,255,255,0.7)' }}>
-                  تم حفظ قالب البطاقة "{templateName}". يمكنك الآن تحميل ملف Excel المخصص لهذا التصميم والذي يحتوي على كافة الحقول المخصصة التي قمت بإضافتها لملئها ورفعها لاحقاً.
+                  {hasCustomFields
+                    ? `تم حفظ قالب البطاقة "${templateName}". يمكنك الآن تحميل ملف Excel المخصص لهذا التصميم والذي يحتوي على كافة الحقول المخصصة التي قمت بإضافتها لملئها ورفعها لاحقاً.`
+                    : `تم حفظ قالب البطاقة "${templateName}" بنجاح. يمكنك الآن المتابعة لإصدار الدعوات.`
+                  }
                 </p>
               </div>
             </div>
             
             <div className="inv-quick-modal__body" style={{ marginTop: '16px', gap: '12px' }}>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => {
-                  downloadCustomExcelTemplate()
-                }}
-                style={{
-                  width: '100%',
-                  background: '#10b981',
-                  borderColor: '#10b981',
-                  color: '#fff',
-                  justifyContent: 'center',
-                  padding: '12px',
-                  fontWeight: '600',
-                  gap: '8px',
-                  display: 'flex',
-                  alignItems: 'center'
-                }}
-              >
-                <Upload size={16} style={{ transform: 'rotate(180deg)' }} />
-                تنزيل نموذج Excel المخصص للتصميم
-              </button>
+              {hasCustomFields && (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => {
+                    downloadCustomExcelTemplate()
+                  }}
+                  style={{
+                    width: '100%',
+                    background: '#10b981',
+                    borderColor: '#10b981',
+                    color: '#fff',
+                    justifyContent: 'center',
+                    padding: '12px',
+                    fontWeight: '600',
+                    gap: '8px',
+                    display: 'flex',
+                    alignItems: 'center'
+                  }}
+                >
+                  <Upload size={16} style={{ transform: 'rotate(180deg)' }} />
+                  تنزيل نموذج Excel المخصص للتصميم
+                </button>
+              )}
               
               <button
                 type="button"
@@ -2051,7 +2136,8 @@ export default function EventDesignEditorPage() {
             </div>
           </div>
         </div>
-      )}
+        )
+      })()}
 
       {modalAlert && (
         <div className="inv-quick-modal-overlay" role="dialog" aria-modal="true" style={{ zIndex: 11000 }}>

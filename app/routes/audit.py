@@ -6,7 +6,7 @@ from typing import Optional
 from app.auth import get_current_user, get_tenant_id_from_header, CurrentUser
 from app.database import get_db
 from app.models.audit import AuditLogRead
-from app.services.membership_service import require_admin
+from app.services.permission_service import require_permission
 
 router = APIRouter(prefix="/audit-logs", tags=["Audit Logs"])
 
@@ -21,9 +21,9 @@ async def list_audit_logs(
     user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List audit logs for the current tenant. Requires admin role."""
+    """List audit logs for the current tenant."""
     tenant_id = get_tenant_id_from_header(request)
-    await require_admin(db, tenant_id, user.id)
+    await require_permission(db, tenant_id, user.id, "settings.view")
 
     query = """
         SELECT id, tenant_id, actor_user_id, action, resource_type, resource_id,

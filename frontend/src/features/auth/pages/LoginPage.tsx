@@ -33,15 +33,23 @@ export default function LoginPage() {
     try {
       const res = await authAPI.login(data)
 
-      const user: AuthUser = {
-        id:         res.user_id!,
-        email:      data.email,
-        full_name:  null,
-        avatar_url: null,
-        is_staff:   false,
+      // Fetch actual profile from /auth/me to get real name, is_staff status, etc.
+      let profile;
+      try {
+        profile = await authAPI.me()
+      } catch (err) {
+        console.error('Failed to fetch user profile', err)
       }
 
-      setAuth(user, res.tenants || [])
+      const user: AuthUser = {
+        id:         profile?.user_id || res.user_id!,
+        email:      profile?.email || data.email,
+        full_name:  profile?.full_name || null,
+        avatar_url: profile?.avatar_url || null,
+        is_staff:   profile?.is_staff || false,
+      }
+
+      setAuth(user, res.tenants || [], undefined, profile?.permissions || [])
       navigate('/dashboard', { replace: true })
     } catch (err: unknown) {
       const e = err as { response?: { data?: { detail?: string } } }

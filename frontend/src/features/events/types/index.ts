@@ -122,12 +122,16 @@ export interface EventGate {
   allowed_classes: TicketClass[] | null
   is_active: boolean
   created_at: string
+  team_id?: string | null
+  assigned_users?: string[]
 }
 
 export interface EventGateCreate {
   name: string
   name_ar?: string
   allowed_classes?: TicketClass[]
+  team_id?: string | null
+  assigned_users?: string[]
 }
 
 export interface EventStats {

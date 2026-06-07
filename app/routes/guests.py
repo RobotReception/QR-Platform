@@ -45,6 +45,16 @@ async def create_guest(
     tenant_id = get_tenant_id_from_header(request)
     await require_permission(db, tenant_id, user.id, "guests.create")
 
+    # ── Plan limit: guests_max ──
+    from app.services.feature_service import enforce_static_limit, get_plan_limit
+    _guests_limit = await get_plan_limit(db, tenant_id, "guests_max")
+    if _guests_limit != -1:
+        _guests_count_res = await db.execute(
+            text("SELECT COUNT(*) FROM guests WHERE tenant_id = :tid"),
+            {"tid": str(tenant_id)},
+        )
+        await enforce_static_limit(db, tenant_id, "guests_max", _guests_count_res.scalar() or 0, "الضيوف")
+
     result = await db.execute(
         text("""
             INSERT INTO guests (tenant_id, full_name, full_name_ar, phone, email, company, title, notes, tags, custom_fields, metadata, created_by)
@@ -139,6 +149,16 @@ async def import_guests(
     """Bulk import guests from a list."""
     tenant_id = get_tenant_id_from_header(request)
     await require_permission(db, tenant_id, user.id, "guests.import")
+
+    # ── Plan limit: guests_max (bulk check) ──
+    from app.services.feature_service import enforce_static_limit, get_plan_limit
+    _guests_limit = await get_plan_limit(db, tenant_id, "guests_max")
+    if _guests_limit != -1:
+        _guests_count_res = await db.execute(
+            text("SELECT COUNT(*) FROM guests WHERE tenant_id = :tid"),
+            {"tid": str(tenant_id)},
+        )
+        await enforce_static_limit(db, tenant_id, "guests_max", _guests_count_res.scalar() or 0, "الضيوف", requested=len(body.guests))
 
     imported = 0
     for g in body.guests:

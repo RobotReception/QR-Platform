@@ -36,6 +36,54 @@ async def scan_checkin(
     tenant_id = get_tenant_id_from_header(request)
     await require_permission(db, tenant_id, user.id, "checkin.scan")
 
+    if body.gate_id:
+        gate_res = await db.execute(
+            text("""
+                SELECT team_id,
+                       EXISTS (SELECT 1 FROM event_gate_users WHERE gate_id = :gid) AS has_users
+                FROM event_gates
+                WHERE id = :gid
+            """),
+            {"gid": str(body.gate_id)},
+        )
+        gate_row = gate_res.mappings().first()
+        if gate_row:
+            team_id = gate_row["team_id"]
+            has_users = gate_row["has_users"]
+            if team_id or has_users:
+                is_allowed = False
+                
+                # Owner and Admin roles bypass restrictions
+                role_res = await db.execute(
+                    text("SELECT role FROM memberships WHERE tenant_id = :tid AND user_id = :uid"),
+                    {"tid": str(tenant_id), "uid": str(user.id)}
+                )
+                role_row = role_res.first()
+                if role_row and role_row[0] in ['owner', 'admin']:
+                    is_allowed = True
+                
+                if not is_allowed and team_id:
+                    team_check = await db.execute(
+                        text("SELECT 1 FROM team_memberships WHERE team_id = :team_id AND user_id = :uid"),
+                        {"team_id": str(team_id), "uid": str(user.id)}
+                    )
+                    if team_check.first():
+                        is_allowed = True
+                
+                if not is_allowed and has_users:
+                    user_check = await db.execute(
+                        text("SELECT 1 FROM event_gate_users WHERE gate_id = :gid AND user_id = :uid"),
+                        {"gid": str(body.gate_id), "uid": str(user.id)}
+                    )
+                    if user_check.first():
+                        is_allowed = True
+                
+                if not is_allowed:
+                    return CheckinResponse(
+                        result="invalid",
+                        message="غير مصرح لك بتسجيل الدخول من هذه البوابة",
+                    )
+
     result = await db.execute(
         text("SELECT * FROM public.validate_checkin(:token, :eid, :gid)"),
         {

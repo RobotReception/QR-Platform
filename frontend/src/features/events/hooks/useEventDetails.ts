@@ -54,6 +54,20 @@ export function useEventUpdate(tenantId: string | null, eventId: string | undefi
   })
 }
 
+// ── Upload Cover ────────────────────────────────────────────────
+export function useEventCoverUpload(tenantId: string | null, eventId: string | undefined) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (file: File) => eventsAPI.uploadCover(eventId!, file),
+    onSuccess: () => {
+      // Invalidate/refresh both list and detail in cache
+      queryClient.invalidateQueries({ queryKey: eventKeys.all(tenantId ?? '') })
+      queryClient.invalidateQueries({ queryKey: eventKeys.detail(tenantId ?? '', eventId ?? '') })
+    },
+  })
+}
+
 // ── Publish ─────────────────────────────────────────────────────
 export function useEventPublish(tenantId: string | null, eventId: string | undefined) {
   const queryClient = useQueryClient()
@@ -85,6 +99,19 @@ export function useGateCreate(eventId: string | undefined) {
   })
 }
 
+// ── Update Gate ─────────────────────────────────────────────────
+export function useGateUpdate(eventId: string | undefined) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ gateId, data }: { gateId: string; data: EventGateCreate }) =>
+      eventsAPI.updateGate(eventId!, gateId, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: eventKeys.gates(eventId ?? '') })
+    },
+  })
+}
+
 // ── Delete Gate ─────────────────────────────────────────────────
 export function useGateDelete(eventId: string | undefined) {
   const queryClient = useQueryClient()
@@ -93,6 +120,18 @@ export function useGateDelete(eventId: string | undefined) {
     mutationFn: (gateId: string) => eventsAPI.deleteGate(eventId!, gateId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: eventKeys.gates(eventId ?? '') })
+    },
+  })
+}
+
+// ── Delete Event ────────────────────────────────────────────────
+export function useEventDelete(tenantId: string | null, eventId: string | undefined) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: () => eventsAPI.delete(eventId!),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: eventKeys.all(tenantId ?? '') })
     },
   })
 }

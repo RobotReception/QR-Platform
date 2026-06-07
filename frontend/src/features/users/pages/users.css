@@ -2,21 +2,216 @@
    USERS PAGE - PROFESSIONAL STYLES
    ═══════════════════════════════════════════════════════ */
 
-/* ── Stats Grid ── */
+/* ── Stats Grid & Cards ── */
 .users-stats-grid {
+  display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.teams-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.dash-stat {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px 24px;
+  border-radius: 14px;
+  background: rgba(30, 41, 59, 0.55);
+  border: 1px solid var(--color-border);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.dash-stat::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(201, 169, 110, 0.3), transparent);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+.dash-stat:hover {
+  transform: translateY(-2px);
+  border-color: rgba(201, 169, 110, 0.35);
+  background: rgba(30, 41, 59, 0.75);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3), 0 0 15px rgba(201, 169, 110, 0.08);
+}
+
+.dash-stat:hover::before {
+  opacity: 1;
+}
+
+/* Icons styling inside stats */
+.dash-stat__icon {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: rgba(201, 169, 110, 0.1);
+  color: var(--color-primary);
+  border: 1px solid rgba(201, 169, 110, 0.2);
+  flex-shrink: 0;
+  transition: all 0.25s ease;
+}
+
+.dash-stat:hover .dash-stat__icon {
+  transform: scale(1.05);
+}
+
+/* Variations */
+.dash-stat--blue .dash-stat__icon {
+  background: rgba(59, 130, 246, 0.1);
+  color: #60a5fa;
+  border-color: rgba(59, 130, 246, 0.2);
+}
+
+.dash-stat--blue::before {
+  background: linear-gradient(90deg, transparent, rgba(59, 130, 246, 0.3), transparent);
+}
+
+.dash-stat--blue:hover {
+  border-color: rgba(59, 130, 246, 0.35);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3), 0 0 15px rgba(59, 130, 246, 0.08);
+}
+
+.dash-stat--gold .dash-stat__icon {
+  background: rgba(245, 158, 11, 0.1);
+  color: #fbbf24;
+  border-color: rgba(245, 158, 11, 0.2);
+}
+
+.dash-stat--gold::before {
+  background: linear-gradient(90deg, transparent, rgba(245, 158, 11, 0.3), transparent);
+}
+
+.dash-stat--gold:hover {
+  border-color: rgba(245, 158, 11, 0.35);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3), 0 0 15px rgba(245, 158, 11, 0.08);
+}
+
+.dash-stat--red .dash-stat__icon {
+  background: rgba(239, 68, 68, 0.1);
+  color: #fca5a5;
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
+.dash-stat--red::before {
+  background: linear-gradient(90deg, transparent, rgba(239, 68, 68, 0.3), transparent);
+}
+
+.dash-stat--red:hover {
+  border-color: rgba(239, 68, 68, 0.35);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3), 0 0 15px rgba(239, 68, 68, 0.08);
+}
+
+/* Stat card texts */
+.dash-stat > div:not(.dash-stat__icon) {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  text-align: right;
+}
+
+.dash-stat__label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dash-stat__value {
+  font-size: 28px;
+  font-weight: 800;
+  color: var(--color-text);
+  line-height: 1.1;
+  font-family: var(--font-en);
+}
+
+.dash-stat__delta {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 @media (max-width: 1200px) {
   .users-stats-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .teams-stats-grid {
+    grid-template-columns: repeat(2, 1fr);
   }
 }
 
-@media (max-width: 640px) {
-  .users-stats-grid {
+@media (max-width: 768px) {
+  .users-stats-grid,
+  .teams-stats-grid {
     grid-template-columns: 1fr;
   }
+  .dash-stat {
+    padding: 16px 20px;
+  }
+}
+
+
+/* ── Panel Header ── */
+.dash-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 20px;
+}
+
+.dash-panel__head > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dash-panel__head span {
+  font-size: 12px;
+  color: var(--color-primary-light);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.dash-panel__head h2 {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.dash-panel__head svg {
+  color: var(--color-primary);
+  opacity: 0.8;
+  flex-shrink: 0;
 }
 
 /* ── Table Container ── */
@@ -36,36 +231,59 @@
 .users-table__head,
 .users-row {
   display: grid;
-  grid-template-columns: 50px minmax(260px, 1.4fr) 140px 120px 140px 120px;
+  grid-template-columns: 50px minmax(260px, 1.4fr) 140px 120px 140px 100px;
   gap: 12px;
   align-items: center;
 }
 
 .users-table__head {
   padding: 0 12px 12px;
-  color: var(--color-text-muted);
-  font-size: 12px;
+  color: var(--color-text-subtle);
+  font-size: 12.5px;
   font-weight: 600;
   border-bottom: 1px solid var(--color-border);
+}
+
+/* Align column headers to match cell contents */
+.users-table__head > * {
+  min-width: 0;
+}
+
+.users-table__head > :nth-child(2) {
+  text-align: right;
+  padding-inline-start: 4px;
+}
+
+.users-table__head > :nth-child(3), /* Role */
+.users-table__head > :nth-child(4), /* Status */
+.users-table__head > :nth-child(5), /* Date */
+.users-table__head > :nth-child(6)  /* Actions */ {
+  text-align: center;
+  justify-self: center;
 }
 
 .users-row {
   min-height: 72px;
   padding: 14px 12px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: rgba(15, 23, 42, 0.45);
-  transition: all 0.2s ease;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  background: rgba(30, 41, 59, 0.35);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .users-row:hover {
-  border-color: rgba(201, 169, 110, 0.3);
-  background: rgba(15, 23, 42, 0.6);
+  border-color: rgba(201, 169, 110, 0.25);
+  background: rgba(30, 41, 59, 0.6);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2), 0 0 15px rgba(201, 169, 110, 0.04);
+  transform: translateY(-1px);
 }
 
 .users-row--selected {
-  border-color: rgba(201, 169, 110, 0.5);
-  background: rgba(201, 169, 110, 0.12);
+  border-color: rgba(201, 169, 110, 0.45);
+  background: rgba(201, 169, 110, 0.1);
+  box-shadow: 0 4px 20px rgba(201, 169, 110, 0.05);
 }
 
 /* ── User Info Cell ── */
@@ -74,6 +292,8 @@
   align-items: center;
   gap: 12px;
   min-width: 0;
+  text-align: right;
+  padding-inline-start: 4px;
 }
 
 .users-row__user strong,
@@ -85,71 +305,115 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--color-text);
 }
 
 .users-row__user span {
-  font-size: 11px;
+  font-size: 11.5px;
   color: var(--color-text-muted);
   font-family: var(--font-en);
+  margin-top: 2px;
+}
+
+/* ── Member Avatar ── */
+.member-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: rgba(201, 169, 110, 0.12);
+  color: var(--color-primary-light);
+  border: 1px solid rgba(201, 169, 110, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 14px;
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  transition: all 0.2s ease;
+}
+
+.member-avatar.small {
+  width: 28px;
+  height: 28px;
+  font-size: 12px;
+}
+
+.member-avatar.large {
+  width: 52px;
+  height: 52px;
+  font-size: 20px;
 }
 
 /* ── Chips & Status ── */
 .users-chip,
 .users-status {
-  min-height: 34px;
+  min-height: 28px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  justify-self: center;
   gap: 6px;
-  padding: 0 14px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 500;
-  border: 1px solid var(--color-border);
+  padding: 0 12px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  border: 1px solid transparent;
+  white-space: nowrap;
 }
 
 /* Role Colors */
 .users-chip--owner {
-  background: rgba(201, 169, 110, 0.15);
+  background: rgba(201, 169, 110, 0.12);
   color: #c9a96e;
-  border-color: rgba(201, 169, 110, 0.3);
+  border-color: rgba(201, 169, 110, 0.22);
 }
 
 .users-chip--admin {
-  background: rgba(59, 130, 246, 0.12);
+  background: rgba(59, 130, 246, 0.1);
   color: #60a5fa;
-  border-color: rgba(59, 130, 246, 0.3);
+  border-color: rgba(59, 130, 246, 0.2);
 }
 
 .users-chip--member {
-  background: rgba(16, 185, 129, 0.12);
-  color: #34d399;
-  border-color: rgba(16, 185, 129, 0.3);
+  background: rgba(34, 197, 94, 0.1);
+  color: #4ade80;
+  border-color: rgba(34, 197, 94, 0.2);
 }
 
 .users-chip--viewer {
-  background: rgba(107, 114, 128, 0.12);
-  color: #9ca3af;
-  border-color: rgba(107, 114, 128, 0.3);
+  background: rgba(148, 163, 184, 0.1);
+  color: #94a3b8;
+  border-color: rgba(148, 163, 184, 0.2);
 }
 
 /* Status Colors */
 .users-status--active {
-  background: rgba(34, 197, 94, 0.12);
-  color: #86efac;
-  border-color: rgba(34, 197, 94, 0.3);
+  background: rgba(34, 197, 94, 0.1);
+  color: #4ade80;
+  border-color: rgba(34, 197, 94, 0.2);
 }
 
 .users-status--invited {
-  background: rgba(245, 158, 11, 0.12);
-  color: #fcd34d;
-  border-color: rgba(245, 158, 11, 0.3);
+  background: rgba(245, 158, 11, 0.1);
+  color: #fbbf24;
+  border-color: rgba(245, 158, 11, 0.2);
 }
 
 .users-status--disabled {
-  background: rgba(239, 68, 68, 0.12);
-  color: #fca5a5;
-  border-color: rgba(239, 68, 68, 0.3);
+  background: rgba(239, 68, 68, 0.1);
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
+.date-cell {
+  text-align: center;
+  justify-self: center;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  font-family: var(--font-en);
 }
 
 /* ── Toolbar ── */
@@ -179,8 +443,8 @@
 .users-search {
   width: 100%;
   height: 44px;
-  padding: 0 14px 0 40px;
-  background: rgba(15, 23, 42, 0.5);
+  padding: 0 40px 0 14px; /* Swapped for RTL: icon is on the right, so we need 40px padding on the right */
+  background: rgba(30, 41, 59, 0.45);
   border: 1px solid var(--color-border);
   border-radius: 8px;
   color: var(--color-text);
@@ -190,8 +454,9 @@
 
 .users-search:focus {
   outline: none;
-  border-color: rgba(201, 169, 110, 0.4);
-  background: rgba(15, 23, 42, 0.7);
+  border-color: rgba(201, 169, 110, 0.45);
+  background: rgba(30, 41, 59, 0.65);
+  box-shadow: 0 0 0 1px rgba(201, 169, 110, 0.25);
 }
 
 .users-search::placeholder {
@@ -205,18 +470,26 @@
 
 .filter-select {
   height: 44px;
-  padding: 0 12px;
-  background: rgba(15, 23, 42, 0.5);
+  padding: 0 16px 0 28px; /* Padding for select arrow in RTL */
+  background: rgba(30, 41, 59, 0.45);
   border: 1px solid var(--color-border);
   border-radius: 8px;
   color: var(--color-text);
   font-size: 14px;
   cursor: pointer;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.filter-select:hover {
+  border-color: rgba(201, 169, 110, 0.25);
+  background: rgba(30, 41, 59, 0.55);
 }
 
 .filter-select:focus {
   outline: none;
-  border-color: rgba(201, 169, 110, 0.4);
+  border-color: rgba(201, 169, 110, 0.45);
+  box-shadow: 0 0 0 1px rgba(201, 169, 110, 0.25);
 }
 
 /* ── Bulk Actions Bar ── */
@@ -672,10 +945,6 @@
    ═══════════════════════════════════════════════════════ */
 
 @media (max-width: 980px) {
-  .users-stats-grid {
-    grid-template-columns: 1fr;
-  }
-
   .users-table__head {
     display: none;
   }

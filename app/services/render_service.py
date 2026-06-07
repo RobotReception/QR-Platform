@@ -328,7 +328,7 @@ def _resolve_dynamic_text(data_key: str, context: dict) -> str:
     })
     _EVENT_LOC_KEYS = frozenset({
         'event.location', 'event.location_ar', 'event_location',
-        'location', 'المكان', 'الموقع', 'venue', 'venue_address',
+        'location', 'المكان', 'الموقع', 'venue',
     })
     _SEAT_KEYS = frozenset({
         'custom.seat', 'seat_number', 'seat',
@@ -380,6 +380,12 @@ def _resolve_dynamic_text(data_key: str, context: dict) -> str:
             or context.get("event", {}).get("venue_address")
             or ""
         )
+    _EVENT_ADDR_KEYS = frozenset({
+        'event.address', 'event_address', 'address',
+        'العنوان', 'عنوان', 'venue_address', 'عنوان المكان',
+    })
+    if key_norm in _EVENT_ADDR_KEYS:
+        return context.get("event", {}).get("venue_address") or ""
     if key_norm in _SEAT_KEYS:
         return str(context.get("custom", {}).get("seat") or "")
     if key_norm in _GATE_KEYS:
@@ -649,6 +655,7 @@ def render_invitation_image(
         "event_date": "event.date",
         "event_time": "event.time",
         "event_location": "event.location",
+        "event_address": "event.address",
         "seat_number": "custom.seat",
         "gate": "custom.gate",
         "hall": "custom.hall",

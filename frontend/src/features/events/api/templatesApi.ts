@@ -19,6 +19,7 @@ export type TemplateElementType =
   | 'event_date'
   | 'event_time'
   | 'event_location'
+  | 'event_address'
   | 'qr_code'
   | 'barcode'
   | 'seat_number'

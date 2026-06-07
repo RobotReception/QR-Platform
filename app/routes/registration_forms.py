@@ -137,9 +137,9 @@ async def get_registration_form(
         result = await db.execute(
             text("""
                 INSERT INTO event_registration_forms (
-                    tenant_id, event_id, is_enabled, barcode_generation_mode, default_ticket_class, fields
+                    tenant_id, event_id, is_enabled, barcode_generation_mode, default_ticket_class, fields, expires_at
                 )
-                VALUES (:tid, :eid, false, 'immediate', 'normal', '[]'::jsonb)
+                VALUES (:tid, :eid, false, 'immediate', 'normal', '[]'::jsonb, null)
                 RETURNING *
             """),
             {"tid": str(tenant_id), "eid": str(event_id)},
@@ -170,6 +170,21 @@ async def save_registration_form(
     if not event_res.first():
         raise HTTPException(404, "الحدث غير موجود")
 
+    if body.is_enabled:
+        from app.services.feature_service import enforce_static_limit
+        enabled_res = await db.execute(
+            text("""
+                SELECT COUNT(*) FROM event_registration_forms
+                WHERE tenant_id = :tid AND is_enabled = true AND event_id != :eid
+            """),
+            {"tid": str(tenant_id), "eid": str(event_id)},
+        )
+        enabled_count = enabled_res.scalar() or 0
+        await enforce_static_limit(
+            db, tenant_id, "registration_forms_max",
+            enabled_count, "نماذج التسجيل النشطة",
+        )
+
     fields_json = json.dumps([f.model_dump() for f in body.fields], ensure_ascii=False)
 
     # Upsert event_registration_forms
@@ -178,12 +193,12 @@ async def save_registration_form(
             INSERT INTO event_registration_forms (
                 tenant_id, event_id, is_enabled, barcode_generation_mode, default_ticket_class,
                 default_template_id, success_message_ar, success_message_en,
-                pending_approval_message_ar, pending_approval_message_en, fields
+                pending_approval_message_ar, pending_approval_message_en, fields, expires_at
             )
             VALUES (
                 :tid, :eid, :is_enabled, :mode, CAST(:tc AS ticket_class),
                 :tmpl, :success_ar, :success_en,
-                :pending_ar, :pending_en, CAST(:fields AS jsonb)
+                :pending_ar, :pending_en, CAST(:fields AS jsonb), :expires_at
             )
             ON CONFLICT (event_id) DO UPDATE SET
                 is_enabled = EXCLUDED.is_enabled,
@@ -195,6 +210,7 @@ async def save_registration_form(
                 pending_approval_message_ar = EXCLUDED.pending_approval_message_ar,
                 pending_approval_message_en = EXCLUDED.pending_approval_message_en,
                 fields = EXCLUDED.fields,
+                expires_at = EXCLUDED.expires_at,
                 updated_at = now()
             RETURNING *
         """),
@@ -210,6 +226,7 @@ async def save_registration_form(
             "pending_ar": body.pending_approval_message_ar,
             "pending_en": body.pending_approval_message_en,
             "fields": fields_json,
+            "expires_at": body.expires_at,
         }
     )
     row = result.mappings().first()
@@ -257,6 +274,7 @@ async def get_public_register_info(
             "event": dict(event_row),
             "form": {
                 "is_enabled": False,
+                "expires_at": None,
                 "fields": [],
                 "success_message_ar": None,
                 "success_message_en": None,
@@ -269,6 +287,7 @@ async def get_public_register_info(
         "event": dict(event_row),
         "form": {
             "is_enabled": form_row["is_enabled"],
+            "expires_at": form_row["expires_at"].isoformat() if form_row["expires_at"] else None,
             "fields": form_row["fields"],
             "success_message_ar": form_row["success_message_ar"],
             "success_message_en": form_row["success_message_en"],
@@ -311,8 +330,23 @@ async def public_register(
     if not form_row or not form_row["is_enabled"]:
         raise HTTPException(400, "التسجيل مغلق لهذا الحدث")
 
-    # 3. Check quota limit
+    # Check expiration time
+    if form_row.get("expires_at"):
+        from datetime import datetime, timezone
+        if datetime.now(timezone.utc) > form_row["expires_at"]:
+            raise HTTPException(400, "عذراً، لقد انتهى وقت التسجيل في هذه الفعالية")
+
+    # 3. Check quota limit (event-level)
     await _check_quota(db, str(tenant_id), str(event_id), form_row["default_ticket_class"])
+
+    # 3b. Plan limits (platform-level)
+    from app.services.feature_service import enforce_monthly_limit, enforce_static_limit
+    await enforce_monthly_limit(db, tenant_id, "invitations_per_month", "الدعوات الشهرية")
+    _inv_total_res = await db.execute(
+        text("SELECT COUNT(*) FROM invitations WHERE event_id = :eid AND tenant_id = :tid AND status NOT IN ('revoked','expired')"),
+        {"eid": str(event_id), "tid": str(tenant_id)},
+    )
+    await enforce_static_limit(db, tenant_id, "invitations_per_event", _inv_total_res.scalar() or 0, "الدعوات لكل حدث")
 
     # 4. Save custom answers into invitation metadata using human-readable labels
     custom_fields_with_labels = {}
@@ -350,11 +384,11 @@ async def public_register(
             INSERT INTO invitations (
                 tenant_id, event_id, template_id, ticket_class,
                 guest_name, guest_name_ar, guest_phone, guest_email,
-                status, rsvp_status, metadata
+                status, rsvp_status, metadata, is_registration
             ) VALUES (
                 :tid, :eid, :tmpl, CAST(:tc AS ticket_class),
                 :gname, :gname_ar, :gphone, :gemail,
-                :status, :rsvp_status, CAST(:meta AS jsonb)
+                :status, :rsvp_status, CAST(:meta AS jsonb), true
             )
             RETURNING *
         """),

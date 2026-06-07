@@ -39,6 +39,7 @@ interface FormSettings {
   success_message_en?: string
   pending_approval_message_ar?: string
   pending_approval_message_en?: string
+  expires_at?: string | null
 }
 
 export default function PublicRegistrationPage() {
@@ -56,6 +57,105 @@ export default function PublicRegistrationPage() {
   const [guestEmail, setGuestEmail] = useState('')
   const [customAnswers, setCustomAnswers] = useState<Record<string, any>>({})
   const [activeDropdownId, setActiveDropdownId] = useState<string | null>(null)
+
+  // ── Multi-Step Pagination States & Helpers ──
+  const [currentPageIndex, setCurrentPageIndex] = useState(0)
+  const [fadeState, setFadeState] = useState<'in' | 'out'>('in')
+
+  const getPages = (fields: RegistrationFormField[]) => {
+    const pages: RegistrationFormField[][] = []
+    let currentPage: RegistrationFormField[] = []
+    let inputCount = 0
+
+    fields.forEach((field) => {
+      const isInput = !['image', 'text_block'].includes(field.type) && field.id !== 'cf_welcome_description'
+      if (isInput) {
+        if (inputCount >= 5) {
+          pages.push(currentPage)
+          currentPage = []
+          inputCount = 0
+        }
+        inputCount++
+      }
+      currentPage.push(field)
+    })
+
+    if (currentPage.length > 0) {
+      pages.push(currentPage)
+    }
+
+    return pages
+  }
+
+  const pages = formSettings?.fields ? getPages(formSettings.fields) : []
+  const totalPages = pages.length
+  const currentPageFields = pages[currentPageIndex] || []
+
+  // Validate fields only on the current step/page
+  const validateCurrentPage = () => {
+    for (const field of currentPageFields) {
+      if (field.id === 'guest_name') {
+        if (!guestName.trim()) {
+          alert('الرجاء إدخال الاسم بالكامل')
+          return false
+        }
+      }
+      if (field.id === 'guest_phone') {
+        if (!guestPhone.trim()) {
+          alert('الرجاء إدخال رقم الجوال')
+          return false
+        }
+      }
+      if (field.id === 'guest_email' && field.required) {
+        if (!guestEmail.trim()) {
+          alert('الرجاء إدخال البريد الإلكتروني')
+          return false
+        }
+      }
+
+      if (!field.system && field.required && field.type !== 'image' && field.type !== 'text_block') {
+        const ans = customAnswers[field.id]
+        if (Array.isArray(ans)) {
+          if (ans.length === 0) {
+            alert(`الرجاء تحديد خيار واحد على الأقل لحقل: ${field.label}`)
+            return false
+          }
+        } else if (ans === undefined || ans === null || (typeof ans === 'string' && !ans.trim()) || ans === false) {
+          alert(`الرجاء إدخال أو تحديد حقل: ${field.label}`)
+          return false
+        }
+      }
+    }
+    return true
+  }
+
+  const handleNextPage = () => {
+    if (!validateCurrentPage()) return
+    
+    setFadeState('out')
+    setTimeout(() => {
+      setCurrentPageIndex(prev => prev + 1)
+      setFadeState('in')
+      
+      const card = document.querySelector('.public-reg-card')
+      if (card) {
+        card.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
+    }, 250)
+  }
+
+  const handlePrevPage = () => {
+    setFadeState('out')
+    setTimeout(() => {
+      setCurrentPageIndex(prev => prev - 1)
+      setFadeState('in')
+      
+      const card = document.querySelector('.public-reg-card')
+      if (card) {
+        card.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
+    }, 250)
+  }
   
   // ── Click outside handler for multiselect dropdowns ──
   useEffect(() => {
@@ -232,6 +332,21 @@ export default function PublicRegistrationPage() {
     )
   }
 
+  const isExpired = formSettings?.expires_at ? new Date(formSettings.expires_at) < new Date() : false
+
+  // ── Registration Expired ──
+  if (isExpired && !submitResult) {
+    return (
+      <div className="public-reg-container" dir="rtl">
+        <div className="public-reg-card" style={{ padding: 40, textAlign: 'center' }}>
+          <AlertCircle size={48} style={{ color: '#ef4444', margin: '0 auto 16px' }} />
+          <h2>عذراً، لقد انتهى وقت التسجيل في هذه الفعالية</h2>
+          <p style={{ color: '#9ca3af', marginTop: 8 }}>انتهت الفترة المحددة للتسجيل الذاتي. يرجى التواصل مع المنظمين للمزيد من المعلومات.</p>
+        </div>
+      </div>
+    )
+  }
+
   // ── Registration Disabled ──
   if (!formSettings.is_enabled && !submitResult) {
     return (
@@ -350,7 +465,54 @@ export default function PublicRegistrationPage() {
 
             <div className="public-reg-body">
               <form onSubmit={handleSubmit} className="public-reg-form">
-                {formSettings.fields.map((field) => {
+                {totalPages > 1 && (
+                  <div className="registration-progress-container">
+                    <div className="registration-progress-bar">
+                      <div 
+                        className="registration-progress-fill" 
+                        style={{ width: `${((currentPageIndex + 1) / totalPages) * 100}%` }}
+                      />
+                    </div>
+                    <span className="registration-progress-text">
+                      الخطوة {currentPageIndex + 1} من {totalPages}
+                    </span>
+                  </div>
+                )}
+
+                <div className={`form-step-pane fade-${fadeState}`}>
+                  {currentPageFields.map((field) => {
+                  // Render Static Image element
+                  if (field.type === 'image') {
+                    return (
+                      <div key={field.id} className="public-form-image-container" style={{ margin: '16px 0', textAlign: 'center' }}>
+                        <img 
+                          src={field.label} 
+                          alt={field.label_en || 'banner'} 
+                          style={{ maxWidth: '100%', maxHeight: '350px', width: 'auto', height: 'auto', objectFit: 'contain', borderRadius: '12px', boxShadow: '0 4px 15px rgba(0,0,0,0.15)' }} 
+                          onError={(e) => {
+                            e.currentTarget.style.display = 'none';
+                          }}
+                        />
+                      </div>
+                    )
+                  }
+
+                  // Render Static Text Block element
+                  if (field.type === 'text_block') {
+                    return (
+                      <div key={field.id} className="public-form-text-container" style={{ margin: '16px 0', padding: '16px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '10px', borderRight: '4px solid #6366f1' }}>
+                        <p style={{ fontSize: '13px', fontWeight: 600, color: '#ffffff', margin: 0, whiteSpace: 'pre-line', lineHeight: '1.6', textAlign: 'right' }}>
+                          {field.label}
+                        </p>
+                        {field.label_en && (
+                          <p style={{ fontSize: '11px', color: '#9ca3af', margin: '4px 0 0', direction: 'ltr', textAlign: 'left' }}>
+                            {field.label_en}
+                          </p>
+                        )}
+                      </div>
+                    )
+                  }
+
                   // Render System Name Field
                   if (field.id === 'guest_name') {
                     return (
@@ -573,24 +735,48 @@ export default function PublicRegistrationPage() {
                     </div>
                   )
                 })}
+                </div>
 
-                <button
-                  type="submit"
-                  className="public-submit-btn"
-                  disabled={submitting}
-                >
-                  {submitting ? (
-                    <>
-                      <Loader2 className="spin" size={16} />
-                      جاري التسجيل...
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles size={16} />
-                      تسجيل الحضور وتأكيد الطلب
-                    </>
+                <div className="form-navigation-actions">
+                  {currentPageIndex > 0 && (
+                    <button
+                      type="button"
+                      className="public-nav-btn-secondary"
+                      onClick={handlePrevPage}
+                      disabled={submitting}
+                    >
+                      السابق
+                    </button>
                   )}
-                </button>
+                  
+                  {currentPageIndex < totalPages - 1 ? (
+                    <button
+                      type="button"
+                      className="public-submit-btn"
+                      onClick={handleNextPage}
+                    >
+                      التالي
+                    </button>
+                  ) : (
+                    <button
+                      type="submit"
+                      className="public-submit-btn"
+                      disabled={submitting}
+                    >
+                      {submitting ? (
+                        <>
+                          <Loader2 className="spin" size={16} />
+                          جاري التسجيل...
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles size={16} />
+                          تسجيل الحضور وتأكيد الطلب
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
               </form>
             </div>
           </>

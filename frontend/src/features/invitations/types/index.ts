@@ -40,6 +40,7 @@ export interface Invitation {
   card_image_url: string | null
   notes: string | null
   metadata: Record<string, any> | null
+  is_registration: boolean
   expires_at: string | null
   created_at: string
   updated_at: string

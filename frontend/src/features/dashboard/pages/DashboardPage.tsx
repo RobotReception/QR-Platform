@@ -1,12 +1,12 @@
-import { useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { motion } from 'framer-motion'
+import { useMemo, useState, useEffect } from 'react'
+import { Navigate, useSearchParams } from 'react-router-dom'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { motion, AnimatePresence } from 'framer-motion'
 import {
   Activity,
   BarChart3,
   CalendarDays,
   Clock3,
-  LogOut,
   MailCheck,
   QrCode,
   RefreshCcw,
@@ -19,6 +19,7 @@ import {
 import { dashboardAPI } from '../api/dashboardApi'
 import { useAuthStore } from '@features/auth/store/authStore'
 import { WorkspaceShell } from '@features/workspace/components/WorkspaceShell'
+import { PERM, usePermission } from '@shared/permissions'
 import { StatCard } from '../components/StatCard'
 import { MiniDonutChart } from '../components/MiniDonutChart'
 import { ActivityTimeline } from '../components/ActivityTimeline'
@@ -298,10 +299,43 @@ function DashboardContent({ data }: { data: DashboardAnalytics }) {
 export default function DashboardPage() {
   const clearAuth = useAuthStore(s => s.clearAuth)
   const currentTenantId = useAuthStore(s => s.currentTenantId)
+
+  // Success states and URL params interceptor for upgraded subscriptions
+  const [searchParams, setSearchParams] = useSearchParams()
+  const queryClient = useQueryClient()
+  const [showUpgradeSuccess, setShowUpgradeSuccess] = useState(false)
+  const [upgradedPlan, setUpgradedPlan] = useState('')
+
+  useEffect(() => {
+    if (searchParams.get('upgrade_success') === 'true') {
+      const plan = searchParams.get('plan') || ''
+      setUpgradedPlan(plan)
+      setShowUpgradeSuccess(true)
+
+      // Invalidate dashboard analytics, settings usage, and tenant details
+      queryClient.invalidateQueries({ queryKey: ['dashboard', currentTenantId] })
+      queryClient.invalidateQueries({ queryKey: ['settings-usage', currentTenantId] })
+      queryClient.invalidateQueries({ queryKey: ['settings-tenant', currentTenantId] })
+
+      // Clear parameters from search history cleanly
+      const newParams = new URLSearchParams(searchParams)
+      newParams.delete('upgrade_success')
+      newParams.delete('plan')
+      setSearchParams(newParams, { replace: true })
+    }
+  }, [searchParams, setSearchParams, queryClient, currentTenantId])
+
+  // Permission checks
+  const hasDashboardAccess = usePermission(PERM.NAV_DASHBOARD)
+  const canEvents = usePermission(PERM.NAV_EVENTS)
+  const canUsers = usePermission(PERM.NAV_USERS)
+  const canTeams = usePermission(PERM.NAV_TEAMS)
+  const canSettings = usePermission(PERM.NAV_SETTINGS)
+
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['dashboard', currentTenantId],
     queryFn: dashboardAPI.analytics,
-    enabled: Boolean(currentTenantId),
+    enabled: Boolean(currentTenantId && hasDashboardAccess),
   })
 
   if (!currentTenantId) {
@@ -317,6 +351,27 @@ export default function DashboardPage() {
     )
   }
 
+  // Redirect if no dashboard access
+  if (!hasDashboardAccess) {
+    if (canEvents) return <Navigate to="/events" replace />
+    if (canUsers) return <Navigate to="/users" replace />
+    if (canTeams) return <Navigate to="/teams" replace />
+    if (canSettings) return <Navigate to="/settings" replace />
+
+    // Fallback: Show a friendly welcome page wrapped in WorkspaceShell
+    return (
+      <WorkspaceShell title="مرحباً بك" subtitle="مساحة العمل الخاصة بك">
+        <div className="dash-state" style={{ minHeight: 'calc(100vh - 200px)' }}>
+          <div className="dash-state__icon-wrap">
+            <Crown size={34} />
+          </div>
+          <h1>مرحباً بك في Qentry</h1>
+          <p>ليس لديك صلاحيات كافية لعرض لوحة التحكم. يرجى استخدام القائمة الجانبية أو التواصل مع مسؤول النظام.</p>
+        </div>
+      </WorkspaceShell>
+    )
+  }
+
   if (isLoading) {
     return (
       <WorkspaceShell title="لوحة التحكم" subtitle="جار التحميل...">
@@ -327,19 +382,78 @@ export default function DashboardPage() {
 
   if (isError || !data) {
     return (
-      <div className="dash-state">
-        <div className="dash-state__icon-wrap dash-state__icon-wrap--error">
-          <Activity size={34} />
+      <WorkspaceShell title="لوحة التحكم" subtitle="خطأ في تحميل البيانات">
+        <div className="dash-state" style={{ minHeight: 'calc(100vh - 200px)' }}>
+          <div className="dash-state__icon-wrap dash-state__icon-wrap--error">
+            <Activity size={34} />
+          </div>
+          <h1>تعذر تحميل البيانات</h1>
+          <p>تحقق من اتصال الـ API ومساحة العمل الحالية.</p>
+          <button onClick={() => refetch()} className="btn btn-primary" style={{ margin: '12px auto' }}>إعادة المحاولة</button>
         </div>
-        <h1>تعذر تحميل البيانات</h1>
-        <p>تحقق من اتصال الـ API ومساحة العمل الحالية.</p>
-        <button onClick={() => refetch()}>إعادة المحاولة</button>
-        <button className="dash-state__ghost" onClick={clearAuth}>
-          <LogOut size={16} />تسجيل الخروج
-        </button>
-      </div>
+      </WorkspaceShell>
     )
   }
 
-  return <DashboardContent data={data} />
+  return (
+    <>
+      <DashboardContent data={data} />
+
+      <AnimatePresence>
+        {showUpgradeSuccess && (
+          <motion.div
+            className="dialog-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            style={{ zIndex: 1100 }}
+            onClick={() => setShowUpgradeSuccess(false)}
+          >
+            <motion.div
+              className="confirm-dialog"
+              initial={{ opacity: 0, scale: 0.92, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.92, y: 12 }}
+              transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+              onClick={(e) => e.stopPropagation()}
+              style={{ textAlign: 'center', padding: '40px 32px' }}
+            >
+              <div
+                className="confirm-dialog__icon"
+                style={{
+                  background: 'rgba(201, 169, 110, 0.15)',
+                  color: '#c9a96e',
+                  width: '64px',
+                  height: '64px',
+                  borderRadius: '50%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  margin: '0 auto 24px',
+                }}
+              >
+                <Crown size={32} />
+              </div>
+
+              <h3 className="confirm-dialog__title" style={{ fontSize: '24px', marginBottom: '12px', color: '#f8fafc' }}>
+                تهانينا! تم ترقية باقتك بنجاح 🎉
+              </h3>
+
+              <p className="confirm-dialog__message" style={{ fontSize: '15px', color: '#94a3b8', lineHeight: '1.6', marginBottom: '32px' }}>
+                تم تفعيل باقة <strong style={{ color: '#c9a96e', textTransform: 'capitalize' }}>{upgradedPlan}</strong> بنجاح لمساحة العمل الخاصة بك. يمكنك الآن الاستمتاع بحدود استخدام أعلى وميزات متقدمة فوراً!
+              </p>
+
+              <button
+                className="btn btn-primary"
+                onClick={() => setShowUpgradeSuccess(false)}
+                style={{ width: '100%', padding: '12px', fontSize: '15px' }}
+              >
+                البدء في استخدام الميزات الجديدة
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
+  )
 }

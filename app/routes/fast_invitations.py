@@ -11,22 +11,87 @@ Features:
 - Optimized for large batches
 """
 from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security.api_key import APIKeyQuery
+from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
 from typing import List, Optional, Dict, Any
 import logging
+import io
+import zipfile
+import asyncio
+import httpx
+from jose import jwt, JWTError
 from urllib.parse import unquote, urlparse
 
-from app.auth import get_current_user, get_tenant_id_from_header, CurrentUser
+from app.auth import get_current_user, get_tenant_id_from_header, CurrentUser, get_jwk_for_token
 from app.database import get_db
 from app.services.permission_service import require_permission
 from app.services.audit_service import log_audit
 from app.services.fast_generation_service import generate_invitations_fast, FastGenerationResult
+from app.services import pdf_service, barcode_service
+from app.services.quota_service import check_quota_mixed
+from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/fast-invitations", tags=["Fast Invitations"])
+settings = get_settings()
+
+token_query = APIKeyQuery(name="token", auto_error=False)
+security_bearer = HTTPBearer(auto_error=False)
+
+async def get_current_user_from_header_or_query(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_bearer),
+    token: Optional[str] = Depends(token_query)
+) -> CurrentUser:
+    raw_token = credentials.credentials if credentials else token
+    if not raw_token:
+        raise HTTPException(
+            status_code=401,
+            detail="Authorization token is required",
+        )
+    try:
+        payload = jwt.decode(
+            raw_token,
+            get_jwk_for_token(raw_token),
+            algorithms=["HS256", "ES256", "RS256"],
+            options={"verify_aud": False}
+        )
+    except JWTError as e:
+        raise HTTPException(
+            status_code=401,
+            detail=f"Invalid token: {str(e)}",
+        )
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(
+            status_code=401,
+            detail="Token missing user ID",
+        )
+    return CurrentUser(
+        id=UUID(user_id),
+        email=payload.get("email"),
+        role=payload.get("role"),
+    )
+
+def get_tenant_id_from_header_or_query(request: Request) -> UUID:
+    tenant_id = request.headers.get("X-Tenant-ID") or request.query_params.get("tenant_id")
+    if not tenant_id:
+        raise HTTPException(
+            status_code=400,
+            detail="X-Tenant-ID header or tenant_id query param is required",
+        )
+    try:
+        return UUID(tenant_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid tenant ID format",
+        )
 
 
 # ══════════════════════════════════════════════
@@ -109,6 +174,8 @@ class DeleteGenerationResponse(BaseModel):
     success: bool
     deleted_invitations: int
     deleted_files: int
+    skipped_checked_in: int = 0
+    message: str = ""
 
 
 def _storage_path_from_signed_url(url: Optional[str]) -> Optional[str]:
@@ -158,10 +225,78 @@ async def generate_invitations_fast_endpoint(
     )
     if not event_check.first():
         raise HTTPException(404, "الحدث غير موجود")
-    
+    # Check RSVP requirements
+    for idx, inv in enumerate(request.invitations):
+        meta = inv.get("metadata") or {}
+        require_rsvp = (
+            inv.get("require_rsvp") is True 
+            or str(inv.get("require_rsvp")).lower() == "true"
+            or meta.get("require_rsvp") is True
+            or str(meta.get("require_rsvp")).lower() == "true"
+        )
+        
+        if require_rsvp:
+            from app.services.feature_service import require_feature
+            await require_feature(db, tenant_id, "rsvp")
+            
+            has_phone = False
+            has_email = False
+            
+            phone_keys = {"guest_phone", "phone", "mobile", "tel", "رقم_الهاتف", "الهاتف", "رقم_الجوال", "الجوال", "موبايل", "الموبايل", "تليفون", "الهاتف_المحمول", "رقم الهاتف", "الهاتف المحمول", "رقم الجوال"}
+            email_keys = {"guest_email", "email", "البريد", "البريد_الإلكتروني", "البريد_الالكتروني", "البريد الإلكتروني", "البريد الالكتروني", "الايميل", "ايميل", "بريد", "بريد_الكتروني", "بريد الكتروني"}
+            
+            # Check invitation keys
+            for k, v in inv.items():
+                k_norm = str(k).strip().lower().replace(" ", "_").replace("-", "_")
+                if k_norm in phone_keys or k in phone_keys:
+                    if str(v or "").strip():
+                        has_phone = True
+                if k_norm in email_keys or k in email_keys:
+                    if str(v or "").strip():
+                        has_email = True
+            
+            # Also check nested metadata / custom fields
+            if meta:
+                for k, v in meta.items():
+                    k_norm = str(k).strip().lower().replace(" ", "_").replace("-", "_")
+                    if k_norm in phone_keys or k in phone_keys:
+                        if str(v or "").strip():
+                            has_phone = True
+                    if k_norm in email_keys or k in email_keys:
+                        if str(v or "").strip():
+                            has_email = True
+                
+                custom_fields = meta.get("custom_fields") or {}
+                if isinstance(custom_fields, dict):
+                    for k, v in custom_fields.items():
+                        k_norm = str(k).strip().lower().replace(" ", "_").replace("-", "_")
+                        if k_norm in phone_keys or k in phone_keys:
+                            if str(v or "").strip():
+                                has_phone = True
+                        if k_norm in email_keys or k in email_keys:
+                            if str(v or "").strip():
+                                has_email = True
+            
+            if not has_phone and not has_email:
+                guest_name = inv.get("guest_name") or inv.get("name") or inv.get("الاسم") or f"ضيف {idx + 1}"
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"السطر {idx + 1} (الضيف: {guest_name}): يجب توفير رقم الهاتف أو البريد الإلكتروني لتفعيل تأكيد الحضور (RSVP)"
+                )
+
     # Check quota
-    await _check_event_quota(db, str(tenant_id), str(request.event_id), request.invitations)
-    
+    await check_quota_mixed(db, str(tenant_id), str(request.event_id), request.invitations)
+
+    # ── Plan limits ──
+    from app.services.feature_service import enforce_monthly_limit, enforce_static_limit
+    _fast_total = len(request.invitations)
+    await enforce_monthly_limit(db, tenant_id, "invitations_per_month", "الدعوات الشهرية", count=_fast_total)
+    _inv_total_res = await db.execute(
+        text("SELECT COUNT(*) FROM invitations WHERE event_id = :eid AND tenant_id = :tid AND status NOT IN ('revoked','expired')"),
+        {"eid": str(request.event_id), "tid": str(tenant_id)},
+    )
+    await enforce_static_limit(db, tenant_id, "invitations_per_event", _inv_total_res.scalar() or 0, "الدعوات لكل حدث", requested=_fast_total)
+
     try:
         # Execute fast generation
         result = await generate_invitations_fast(
@@ -247,8 +382,17 @@ async def generate_invitations_by_count(
         })
     
     # Check quota
-    await _check_event_quota(db, str(tenant_id), str(request.event_id), invitations_data)
-    
+    await check_quota_mixed(db, str(tenant_id), str(request.event_id), invitations_data)
+
+    # ── Plan limits ──
+    from app.services.feature_service import enforce_monthly_limit, enforce_static_limit
+    await enforce_monthly_limit(db, tenant_id, "invitations_per_month", "الدعوات الشهرية", count=request.count)
+    _inv_total_res = await db.execute(
+        text("SELECT COUNT(*) FROM invitations WHERE event_id = :eid AND tenant_id = :tid AND status NOT IN ('revoked','expired')"),
+        {"eid": str(request.event_id), "tid": str(tenant_id)},
+    )
+    await enforce_static_limit(db, tenant_id, "invitations_per_event", _inv_total_res.scalar() or 0, "الدعوات لكل حدث", requested=request.count)
+
     try:
         # Execute fast generation
         result = await generate_invitations_fast(
@@ -309,7 +453,10 @@ async def download_event_pdf(
 ):
     """Get download URL for the generated PDF of an event."""
     tenant_id = get_tenant_id_from_header(http_request)
-    await require_permission(db, tenant_id, user.id, "invitations.view")
+    await require_permission(db, tenant_id, user.id, "invitations.export")
+    
+    from app.services.feature_service import require_feature
+    await require_feature(db, tenant_id, "pdf_export")
     
     # Get PDF URL from database
     result = await db.execute(
@@ -340,7 +487,10 @@ async def download_event_zip(
 ):
     """Get download URL for the generated ZIP of an event."""
     tenant_id = get_tenant_id_from_header(http_request)
-    await require_permission(db, tenant_id, user.id, "invitations.view")
+    await require_permission(db, tenant_id, user.id, "invitations.export")
+    
+    from app.services.feature_service import require_feature
+    await require_feature(db, tenant_id, "pdf_export")
     
     # Get ZIP URL from database
     result = await db.execute(
@@ -369,10 +519,50 @@ async def get_generation_history(
     user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List completed fast generation operations for an event."""
+    """List completed fast generation operations and registration form submissions for an event."""
     tenant_id = get_tenant_id_from_header(http_request)
     await require_permission(db, tenant_id, user.id, "invitations.view")
 
+    # 1. Fetch registration form submissions count
+    reg_result = await db.execute(
+        text("""
+            SELECT
+                COUNT(*) AS total_invitations,
+                COUNT(CASE WHEN ticket_class = 'vip' THEN 1 END) AS vip_count,
+                COUNT(CASE WHEN ticket_class = 'normal' THEN 1 END) AS normal_count,
+                MAX(updated_at) AS generated_at
+            FROM invitations
+            WHERE event_id = :eid
+              AND tenant_id = :tid
+              AND is_registration = true
+              AND (metadata IS NULL OR metadata->>'generation_deleted' IS DISTINCT FROM 'true')
+        """),
+        {"eid": str(event_id), "tid": str(tenant_id)}
+    )
+    reg_row = reg_result.mappings().first()
+
+    # 2. Fetch RSVP submissions count (virtual batch)
+    rsvp_result = await db.execute(
+        text("""
+            SELECT
+                COUNT(*) AS total_invitations,
+                COUNT(CASE WHEN ticket_class = 'vip' THEN 1 END) AS vip_count,
+                COUNT(CASE WHEN ticket_class = 'normal' THEN 1 END) AS normal_count,
+                MAX(updated_at) AS generated_at,
+                MAX(pdf_url) AS pdf_url,
+                MAX(zip_url) AS zip_url
+            FROM invitations
+            WHERE event_id = :eid
+              AND tenant_id = :tid
+              AND (metadata IS NOT NULL AND metadata->>'require_rsvp' = 'true')
+              AND is_registration = false
+              AND (metadata IS NULL OR metadata->>'generation_deleted' IS DISTINCT FROM 'true')
+        """),
+        {"eid": str(event_id), "tid": str(tenant_id)}
+    )
+    rsvp_row = rsvp_result.mappings().first()
+
+    # 3. Fetch standard PDF/ZIP generation batches
     result = await db.execute(
         text("""
             SELECT
@@ -388,6 +578,8 @@ async def get_generation_history(
               AND tenant_id = :tid
               AND (pdf_url IS NOT NULL OR zip_url IS NOT NULL)
               AND (metadata IS NULL OR metadata->>'generation_deleted' IS DISTINCT FROM 'true')
+              AND is_registration = false
+              AND (metadata IS NULL OR metadata->>'require_rsvp' IS DISTINCT FROM 'true')
             GROUP BY pdf_url, zip_url
             ORDER BY MAX(updated_at) DESC
             LIMIT 50
@@ -395,7 +587,57 @@ async def get_generation_history(
         {"eid": str(event_id), "tid": str(tenant_id)}
     )
 
+    # 4. Fetch designed template/batch generations from generation_batches
+    batch_result = await db.execute(
+        text("""
+            SELECT
+                b.id::text AS id,
+                COUNT(i.id) AS total_invitations,
+                COUNT(CASE WHEN i.ticket_class = 'vip' THEN 1 END) AS vip_count,
+                COUNT(CASE WHEN i.ticket_class = 'normal' THEN 1 END) AS normal_count,
+                b.updated_at AS generated_at,
+                b.result_pdf_url AS pdf_url,
+                b.result_zip_url AS zip_url
+            FROM generation_batches b
+            LEFT JOIN batch_items bi ON bi.batch_id = b.id
+            LEFT JOIN invitations i ON i.id = bi.invitation_id AND (i.metadata IS NULL OR i.metadata->>'generation_deleted' IS DISTINCT FROM 'true')
+            WHERE b.event_id = :eid
+              AND b.tenant_id = :tid
+              AND b.status = 'ready'
+              AND (b.metadata IS NULL OR b.metadata->>'generation_deleted' IS DISTINCT FROM 'true')
+            GROUP BY b.id, b.updated_at, b.result_pdf_url, b.result_zip_url
+            ORDER BY b.updated_at DESC
+            LIMIT 50
+        """),
+        {"eid": str(event_id), "tid": str(tenant_id)}
+    )
+
     items = []
+    
+    # Add virtual registrations row if any exist
+    if reg_row and reg_row["total_invitations"] > 0:
+        items.append({
+            "id": "registration_submissions",
+            "total_invitations": reg_row["total_invitations"],
+            "vip_count": reg_row["vip_count"],
+            "normal_count": reg_row["normal_count"],
+            "generated_at": reg_row["generated_at"].isoformat() if reg_row["generated_at"] else None,
+            "pdf_url": f"/api/v1/fast-invitations/history/{event_id}/registration_submissions/pdf",
+            "zip_url": f"/api/v1/fast-invitations/history/{event_id}/registration_submissions/zip",
+        })
+
+    # Add virtual RSVP row if any exist
+    if rsvp_row and rsvp_row["total_invitations"] > 0:
+        items.append({
+            "id": "rsvp_submissions",
+            "total_invitations": rsvp_row["total_invitations"],
+            "vip_count": rsvp_row["vip_count"],
+            "normal_count": rsvp_row["normal_count"],
+            "generated_at": rsvp_row["generated_at"].isoformat() if rsvp_row["generated_at"] else None,
+            "pdf_url": rsvp_row["pdf_url"],
+            "zip_url": rsvp_row["zip_url"],
+        })
+
     for row in result.mappings().all():
         items.append({
             "id": row["id"],
@@ -406,6 +648,20 @@ async def get_generation_history(
             "pdf_url": row["pdf_url"],
             "zip_url": row["zip_url"],
         })
+
+    for row in batch_result.mappings().all():
+        items.append({
+            "id": row["id"],
+            "total_invitations": row["total_invitations"],
+            "vip_count": row["vip_count"],
+            "normal_count": row["normal_count"],
+            "generated_at": row["generated_at"].isoformat() if row["generated_at"] else None,
+            "pdf_url": row["pdf_url"],
+            "zip_url": row["zip_url"],
+        })
+
+    # Sort combined history items by generated_at date descending
+    items.sort(key=lambda x: x["generated_at"] or "", reverse=True)
     return items
 
 
@@ -419,23 +675,75 @@ async def get_generation_operation_details(
 ):
     """Return all invitations that belong to a given generation operation (by operation id).
 
-    The operation id is the md5 hash of the concatenated pdf_url and zip_url used in the history grouping.
+    The operation id is the md5 hash of the concatenated pdf_url and zip_url used in the history grouping,
+    the UUID string of a designed batch from generation_batches,
+    or the special virtual IDs 'registration_submissions' / 'rsvp_submissions'.
     """
     tenant_id = get_tenant_id_from_header(http_request)
     await require_permission(db, tenant_id, user.id, "invitations.view")
 
-    result = await db.execute(
-        text("""
-            SELECT *
-            FROM invitations
-            WHERE event_id = :eid
-              AND tenant_id = :tid
-              AND md5(COALESCE(pdf_url, '') || '|' || COALESCE(zip_url, '')) = :opid
-              AND (metadata IS NULL OR metadata->>'generation_deleted' IS DISTINCT FROM 'true')
-            ORDER BY created_at DESC
-        """),
-        {"eid": str(event_id), "tid": str(tenant_id), "opid": operation_id},
-    )
+    is_uuid = False
+    try:
+        if len(operation_id) == 36:
+            UUID(operation_id)
+            is_uuid = True
+    except ValueError:
+        pass
+
+    if operation_id == "registration_submissions":
+        result = await db.execute(
+            text("""
+                SELECT *
+                FROM invitations
+                WHERE event_id = :eid
+                  AND tenant_id = :tid
+                  AND is_registration = true
+                  AND (metadata IS NULL OR metadata->>'generation_deleted' IS DISTINCT FROM 'true')
+                ORDER BY created_at DESC
+            """),
+            {"eid": str(event_id), "tid": str(tenant_id)},
+        )
+    elif operation_id == "rsvp_submissions":
+        result = await db.execute(
+            text("""
+                SELECT *
+                FROM invitations
+                WHERE event_id = :eid
+                  AND tenant_id = :tid
+                  AND (metadata IS NOT NULL AND metadata->>'require_rsvp' = 'true')
+                  AND is_registration = false
+                  AND (metadata IS NULL OR metadata->>'generation_deleted' IS DISTINCT FROM 'true')
+                ORDER BY created_at DESC
+            """),
+            {"eid": str(event_id), "tid": str(tenant_id)},
+        )
+    elif is_uuid:
+        result = await db.execute(
+            text("""
+                SELECT i.*
+                FROM invitations i
+                JOIN batch_items bi ON bi.invitation_id = i.id
+                WHERE i.event_id = :eid
+                  AND i.tenant_id = :tid
+                  AND bi.batch_id = :opid
+                  AND (i.metadata IS NULL OR i.metadata->>'generation_deleted' IS DISTINCT FROM 'true')
+                ORDER BY i.created_at DESC
+            """),
+            {"eid": str(event_id), "tid": str(tenant_id), "opid": operation_id},
+        )
+    else:
+        result = await db.execute(
+            text("""
+                SELECT *
+                FROM invitations
+                WHERE event_id = :eid
+                  AND tenant_id = :tid
+                  AND md5(COALESCE(pdf_url, '') || '|' || COALESCE(zip_url, '')) = :opid
+                  AND (metadata IS NULL OR metadata->>'generation_deleted' IS DISTINCT FROM 'true')
+                ORDER BY created_at DESC
+            """),
+            {"eid": str(event_id), "tid": str(tenant_id), "opid": operation_id},
+        )
 
     rows = result.mappings().all()
     return [InvitationRead(**dict(r)) for r in rows]
@@ -449,58 +757,148 @@ async def delete_generation_operation(
     user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete one fast generation operation and its invitations."""
+    """Delete/revoke one fast generation operation or virtual batch with strict precautions."""
     tenant_id = get_tenant_id_from_header(http_request)
-    await require_permission(db, tenant_id, user.id, "invitations.revoke")
+    await require_permission(db, tenant_id, user.id, "batches.manage")
 
-    operation = await db.execute(
-        text("""
-            SELECT
-                md5(COALESCE(pdf_url, '') || '|' || COALESCE(zip_url, '')) AS id,
-                pdf_url,
-                zip_url,
-                COUNT(*) AS total_invitations
-            FROM invitations
-            WHERE event_id = :eid
-              AND tenant_id = :tid
-              AND (pdf_url IS NOT NULL OR zip_url IS NOT NULL)
-              AND (metadata IS NULL OR metadata->>'generation_deleted' IS DISTINCT FROM 'true')
-            GROUP BY pdf_url, zip_url
-            HAVING md5(COALESCE(pdf_url, '') || '|' || COALESCE(zip_url, '')) = :opid
-            LIMIT 1
-        """),
-        {"eid": str(event_id), "tid": str(tenant_id), "opid": operation_id},
-    )
-    row = operation.mappings().first()
-    if not row:
-        raise HTTPException(404, "عملية التوليد غير موجودة")
+    is_uuid = False
+    try:
+        if len(operation_id) == 36:
+            UUID(operation_id)
+            is_uuid = True
+    except ValueError:
+        pass
 
-    deleted = await db.execute(
-        text("""
-            UPDATE invitations SET
-                status = 'revoked',
-                metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
-                    'generation_deleted', true,
-                    'generation_deleted_at', now(),
-                    'generation_deleted_by', :user_id,
-                    'generation_delete_operation_id', :opid
-                ),
-                updated_at = now()
-            WHERE event_id = :eid
-              AND tenant_id = :tid
-              AND md5(COALESCE(pdf_url, '') || '|' || COALESCE(zip_url, '')) = :opid
-              AND (metadata IS NULL OR metadata->>'generation_deleted' IS DISTINCT FROM 'true')
-            RETURNING id
-        """),
-        {
-            "eid": str(event_id),
-            "tid": str(tenant_id),
-            "opid": operation_id,
-            "user_id": str(user.id),
-        },
-    )
-    deleted_count = len(deleted.fetchall())
+    # 1. Fetch invitations associated with this operation_id
+    if operation_id == "registration_submissions":
+        invites_res = await db.execute(
+            text("""
+                SELECT id, status, checked_in_at, checkin_count, guest_name
+                FROM invitations
+                WHERE event_id = :eid
+                  AND tenant_id = :tid
+                  AND is_registration = true
+                  AND (metadata IS NULL OR metadata->>'generation_deleted' IS DISTINCT FROM 'true')
+            """),
+            {"eid": str(event_id), "tid": str(tenant_id)},
+        )
+    elif operation_id == "rsvp_submissions":
+        invites_res = await db.execute(
+            text("""
+                SELECT id, status, checked_in_at, checkin_count, guest_name
+                FROM invitations
+                WHERE event_id = :eid
+                  AND tenant_id = :tid
+                  AND (metadata IS NOT NULL AND metadata->>'require_rsvp' = 'true')
+                  AND is_registration = false
+                  AND (metadata IS NULL OR metadata->>'generation_deleted' IS DISTINCT FROM 'true')
+            """),
+            {"eid": str(event_id), "tid": str(tenant_id)},
+        )
+    elif is_uuid:
+        invites_res = await db.execute(
+            text("""
+                SELECT i.id, i.status, i.checked_in_at, i.checkin_count, i.guest_name
+                FROM invitations i
+                JOIN batch_items bi ON bi.invitation_id = i.id
+                WHERE i.event_id = :eid
+                  AND i.tenant_id = :tid
+                  AND bi.batch_id = :opid
+                  AND (i.metadata IS NULL OR i.metadata->>'generation_deleted' IS DISTINCT FROM 'true')
+            """),
+            {"eid": str(event_id), "tid": str(tenant_id), "opid": operation_id},
+        )
+    else:
+        invites_res = await db.execute(
+            text("""
+                SELECT id, status, checked_in_at, checkin_count, guest_name
+                FROM invitations
+                WHERE event_id = :eid
+                  AND tenant_id = :tid
+                  AND md5(COALESCE(pdf_url, '') || '|' || COALESCE(zip_url, '')) = :opid
+                  AND (metadata IS NULL OR metadata->>'generation_deleted' IS DISTINCT FROM 'true')
+            """),
+            {"eid": str(event_id), "tid": str(tenant_id), "opid": operation_id},
+        )
 
+    all_invites = [dict(r) for r in invites_res.mappings().all()]
+    if not all_invites:
+        raise HTTPException(404, "سجل هذه المجموعة غير موجود أو تم إلغاؤه بالفعل")
+
+    # 2. Check for checked-in invitations
+    revokable_ids = []
+    checked_in_names = []
+    for inv in all_invites:
+        is_checked_in = (
+            inv["status"] == "checked_in"
+            or inv["checked_in_at"] is not None
+            or (inv["checkin_count"] or 0) > 0
+        )
+        if is_checked_in:
+            checked_in_names.append(inv["guest_name"] or "ضيف")
+        else:
+            revokable_ids.append(inv["id"])
+
+    total_count = len(all_invites)
+    skipped_count = len(checked_in_names)
+
+    if skipped_count == total_count:
+        # All invitations are checked in, cannot delete anything!
+        names_str = "، ".join(checked_in_names[:5])
+        if len(checked_in_names) > 5:
+            names_str += f"... وغيرهم ({len(checked_in_names)} ضيف)"
+        raise HTTPException(
+            400,
+            f"لا يمكن إلغاء هذه المجموعة لأن جميع الضيوف قاموا بتسجيل الدخول بالفعل ({names_str})."
+        )
+
+    # 3. Soft-delete revokable ones
+    deleted_count = 0
+    if revokable_ids:
+        # We can update in batches or single query using ANY
+        await db.execute(
+            text("""
+                UPDATE invitations SET
+                    status = 'revoked',
+                    metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+                        'generation_deleted', true,
+                        'generation_deleted_at', now(),
+                        'generation_deleted_by', :user_id,
+                        'generation_delete_operation_id', :opid
+                    ),
+                    updated_at = now()
+                WHERE id = ANY(:ids)
+            """),
+            {
+                "ids": revokable_ids,
+                "user_id": str(user.id),
+                "opid": operation_id,
+            },
+        )
+        deleted_count = len(revokable_ids)
+
+    # 4. If it's a designed batch, update batch status to cancelled/deleted
+    if is_uuid:
+        await db.execute(
+            text("""
+                UPDATE generation_batches SET
+                    status = 'cancelled',
+                    metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+                        'generation_deleted', true,
+                        'generation_deleted_at', now(),
+                        'generation_deleted_by', :user_id
+                    ),
+                    updated_at = now()
+                WHERE id = :opid AND tenant_id = :tid
+            """),
+            {
+                "opid": operation_id,
+                "tid": str(tenant_id),
+                "user_id": str(user.id),
+            },
+        )
+
+    # Log audit
     await log_audit(
         db,
         tenant_id=tenant_id,
@@ -511,15 +909,30 @@ async def delete_generation_operation(
         metadata={
             "operation_id": operation_id,
             "soft_deleted_invitations": deleted_count,
+            "skipped_checked_in": skipped_count,
         },
         ip_address=http_request.client.host if http_request.client else None,
     )
     await db.commit()
 
+    # Formulate safety warning message in Arabic
+    if skipped_count > 0:
+        names_str = "، ".join(checked_in_names[:3])
+        if len(checked_in_names) > 3:
+            names_str += f"... وغيرهم ({len(checked_in_names)} ضيف)"
+        message = (
+            f"تم إلغاء {deleted_count} دعوة بنجاح. "
+            f"تم الإبقاء على {skipped_count} دعوة وتخطيها لأنهم قاموا بتسجيل الدخول بالفعل ({names_str})."
+        )
+    else:
+        message = f"تم إلغاء جميع الدعوات في هذه المجموعة بنجاح (عدد {deleted_count} دعوة)."
+
     return {
         "success": True,
         "deleted_invitations": deleted_count,
         "deleted_files": 0,
+        "skipped_checked_in": skipped_count,
+        "message": message,
     }
 
 
@@ -582,44 +995,178 @@ async def get_generation_stats(
 async def _check_event_quota(
     db: AsyncSession, tenant_id: str, event_id: str, invitations_data: List[Dict[str, Any]]
 ):
-    """Check if event has quota for the requested invitations."""
-    # Count by ticket class
-    vip_count = sum(1 for inv in invitations_data if inv.get('ticket_class') == 'vip')
-    normal_count = sum(1 for inv in invitations_data if inv.get('ticket_class') == 'normal')
-    
-    # Get current usage and quotas
-    result = await db.execute(
+    """Legacy wrapper — delegates to centralized quota_service."""
+    await check_quota_mixed(db, tenant_id, event_id, invitations_data)
+
+
+async def _download_image_bytes(client: httpx.AsyncClient, url: str) -> Optional[bytes]:
+    """Helper to download image bytes over HTTP."""
+    try:
+        resp = await client.get(url, timeout=15.0)
+        if resp.status_code == 200:
+            return resp.content
+    except Exception as e:
+        logger.error(f"Failed to download image from {url}: {e}")
+    return None
+
+
+def _generate_fallback_qr_bytes(token: str) -> bytes:
+    """Helper to generate fallback QR code image bytes."""
+    payload_url = f"{settings.app_url}/i/{token}"
+    return barcode_service.generate_qr_png(payload_url, size_px=400)
+
+
+@router.get("/history/{event_id}/registration_submissions/pdf")
+async def download_registration_pdf(
+    event_id: UUID,
+    request: Request,
+    user: CurrentUser = Depends(get_current_user_from_header_or_query),
+    db: AsyncSession = Depends(get_db),
+):
+    """Compile and stream all accepted registration invitations as a PDF."""
+    tenant_id = get_tenant_id_from_header_or_query(request)
+    await require_permission(db, tenant_id, user.id, "invitations.export")
+
+    from app.services.feature_service import require_feature
+    await require_feature(db, tenant_id, "pdf_export")
+
+    res = await db.execute(
         text("""
-            SELECT 
-                e.vip_quota,
-                e.normal_quota,
-                COUNT(CASE WHEN i.ticket_class = 'vip' AND i.status NOT IN ('revoked','expired') THEN 1 END) as vip_used,
-                COUNT(CASE WHEN i.ticket_class = 'normal' AND i.status NOT IN ('revoked','expired') THEN 1 END) as normal_used
-            FROM events e
-            LEFT JOIN invitations i ON i.event_id = e.id
-            WHERE e.id = :eid AND e.tenant_id = :tid
-            GROUP BY e.id
+            SELECT id, token, guest_name, ticket_class, card_image_url, render_image_url, barcode_png_url
+            FROM invitations
+            WHERE event_id = :eid
+              AND tenant_id = :tid
+              AND is_registration = true
+              AND status = 'accepted'
+              AND (metadata IS NULL OR metadata->>'generation_deleted' IS DISTINCT FROM 'true')
+            ORDER BY created_at DESC
         """),
-        {"eid": event_id, "tid": tenant_id}
+        {"eid": str(event_id), "tid": str(tenant_id)},
     )
-    
-    row = result.mappings().first()
-    if not row:
-        raise HTTPException(404, "الحدث غير موجود")
-    
-    # Check VIP quota
-    if row["vip_quota"] > 0 and (row["vip_used"] + vip_count) > row["vip_quota"]:
-        raise HTTPException(
-            400, 
-            f"تم الوصول للحد الأقصى لدعوات VIP ({row['vip_quota']}). "
-            f"المستخدم: {row['vip_used']}, المطلوب: {vip_count}"
-        )
+    rows = res.mappings().all()
+    if not rows:
+        raise HTTPException(404, "لا توجد دعوات تسجيل مقبولة لتنزيلها")
+
+    # Download or generate image for each in parallel
+    async with httpx.AsyncClient() as client:
+        tasks = []
+        for r in rows:
+            img_url = r["card_image_url"] or r["render_image_url"] or r["barcode_png_url"]
+            if img_url:
+                tasks.append(_download_image_bytes(client, img_url))
+            else:
+                tasks.append(asyncio.sleep(0, result=None))
+        downloaded = await asyncio.gather(*tasks)
+
+    card_images = []
+    barcode_items = []
+    has_designed = False
+
+    for idx, r in enumerate(rows):
+        img_bytes = downloaded[idx]
+        if not img_bytes:
+            img_bytes = _generate_fallback_qr_bytes(r["token"])
+
+        is_designed_card = bool(r["card_image_url"] or r["render_image_url"])
+        if is_designed_card:
+            has_designed = True
+            card_images.append(img_bytes)
+        else:
+            barcode_items.append({
+                "png_bytes": img_bytes,
+                "code": r["token"][:8],
+                "guest_name": r["guest_name"] or "ضيف",
+                "ticket_class": r["ticket_class"]
+            })
+
+    if has_designed:
+        all_cards = card_images + [item["png_bytes"] for item in barcode_items]
+        pdf_bytes = pdf_service.generate_cards_pdf(all_cards, {"card_per_page": True})
+    else:
+        layout = {
+            "page_size": "A4",
+            "orientation": "portrait",
+            "rows": 5,
+            "cols": 5,
+            "margin_top_mm": 10,
+            "margin_bottom_mm": 10,
+            "margin_left_mm": 10,
+            "margin_right_mm": 10,
+            "gap_x_mm": 2,
+            "gap_y_mm": 2,
+            "show_code_text": False,
+            "show_guest_name": True,
+        }
+        pdf_bytes = pdf_service.generate_barcode_grid_pdf(barcode_items, layout)
+
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"attachment; filename=registration_invitations_{event_id}.pdf"
+        }
+    )
 
 
-    # Check normal quota
-    if row["normal_quota"] > 0 and (row["normal_used"] + normal_count) > row["normal_quota"]:
-        raise HTTPException(
-            400,
-            f"تم الوصول للحد الأقصى لدعوات Normal ({row['normal_quota']}). "
-            f"المستخدم: {row['normal_used']}, المطلوب: {normal_count}"
-        )
+@router.get("/history/{event_id}/registration_submissions/zip")
+async def download_registration_zip(
+    event_id: UUID,
+    request: Request,
+    user: CurrentUser = Depends(get_current_user_from_header_or_query),
+    db: AsyncSession = Depends(get_db),
+):
+    """Compile and stream all accepted registration invitations as a ZIP archive."""
+    tenant_id = get_tenant_id_from_header_or_query(request)
+    await require_permission(db, tenant_id, user.id, "invitations.export")
+
+    from app.services.feature_service import require_feature
+    await require_feature(db, tenant_id, "pdf_export")
+
+    res = await db.execute(
+        text("""
+            SELECT id, token, guest_name, ticket_class, card_image_url, render_image_url, barcode_png_url
+            FROM invitations
+            WHERE event_id = :eid
+              AND tenant_id = :tid
+              AND is_registration = true
+              AND status = 'accepted'
+              AND (metadata IS NULL OR metadata->>'generation_deleted' IS DISTINCT FROM 'true')
+            ORDER BY created_at DESC
+        """),
+        {"eid": str(event_id), "tid": str(tenant_id)},
+    )
+    rows = res.mappings().all()
+    if not rows:
+        raise HTTPException(404, "لا توجد دعوات تسجيل مقبولة لتنزيلها")
+
+    # Download in parallel
+    async with httpx.AsyncClient() as client:
+        tasks = []
+        for r in rows:
+            img_url = r["card_image_url"] or r["render_image_url"] or r["barcode_png_url"]
+            if img_url:
+                tasks.append(_download_image_bytes(client, img_url))
+            else:
+                tasks.append(asyncio.sleep(0, result=None))
+        downloaded = await asyncio.gather(*tasks)
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+        for idx, r in enumerate(rows):
+            img_bytes = downloaded[idx]
+            if not img_bytes:
+                img_bytes = _generate_fallback_qr_bytes(r["token"])
+            
+            guest_name = r["guest_name"] or f"Guest_{idx+1}"
+            safe_name = "".join(c for c in guest_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+            filename = f"{idx+1:04d}__{safe_name[:50]}.png"
+            zf.writestr(filename, img_bytes)
+
+    zip_buffer.seek(0)
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f"attachment; filename=registration_invitations_{event_id}.zip"
+        }
+    )

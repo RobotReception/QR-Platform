@@ -5,7 +5,7 @@ from pydantic import BaseModel, EmailStr
 from typing import Optional
 from uuid import UUID
 
-from app.auth import get_current_user, CurrentUser
+from app.auth import get_current_user, get_tenant_id_from_header, CurrentUser
 from app.config import get_settings
 from app.database import get_db, get_supabase_admin
 from app.services.email_service import (
@@ -167,7 +167,7 @@ async def signup(
                     current_period_start, current_period_end, trial_ends_at)
                 VALUES (
                     :tid,
-                    (SELECT id FROM plans WHERE code = 'free'),
+                    (SELECT id FROM plans WHERE code = 'starter'),
                     'active', now(), now() + INTERVAL '30 days',
                     now() + INTERVAL '14 days'
                 )
@@ -738,11 +738,13 @@ async def logout(
 
 @router.get("/me")
 async def get_me(
+    request: Request,
     user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Get current user info + profile + list of tenants with roles.
+    When X-Tenant-ID header is set, includes permissions for that tenant.
     This is the main endpoint the frontend calls after login.
     """
     # Get profile (graceful fallback if DB unavailable)
@@ -768,6 +770,13 @@ async def get_me(
     except Exception:
         pass  # No tenants if schema not ready
 
+    permissions: list[str] = []
+    try:
+        tenant_id = get_tenant_id_from_header(request)
+        permissions = await get_user_permissions(db, tenant_id, user.id)
+    except Exception:
+        pass
+
     return {
         "user_id": str(user.id),
         "email": user.email,
@@ -780,4 +789,5 @@ async def get_me(
         "last_login_at": profile["last_login_at"] if profile else None,
         "created_at": profile["created_at"] if profile else None,
         "tenants": [TenantInfo(**t) for t in tenants],
+        "permissions": permissions,
     }

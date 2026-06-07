@@ -9,6 +9,7 @@ import {
   FileText, Images, CheckCircle2, AlertCircle, RefreshCw, Clock, Trash2, Upload, FileSpreadsheet, X, Users, Sparkles, Copy
 } from 'lucide-react'
 import '../pages/events.css'
+import { Can, PERM } from '@shared/permissions'
 
 interface Props {
   event: EventModel
@@ -45,10 +46,15 @@ export function EventBarcodesTab({ event, stats, onlyHistory = false }: Props) {
 
   const { mutate: deleteOperation, isPending: isDeletingOperation, variables: deletingOperationId } = useMutation({
     mutationFn: (operationId: string) => invitationsApi.deleteGenerationOperation(event.id, operationId),
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['fast-generation-history', event.id] })
       queryClient.invalidateQueries({ queryKey: ['event-stats', event.id] })
       queryClient.invalidateQueries({ queryKey: ['events'] })
+      if (data?.message) {
+        alert(data.message)
+      } else {
+        alert('تم إلغاء وحذف عملية التوليد بنجاح')
+      }
     },
     onError: (err: any) => {
       setLocalError(err.response?.data?.detail || err.message || 'تعذر حذف عملية التوليد')
@@ -91,6 +97,15 @@ export function EventBarcodesTab({ event, stats, onlyHistory = false }: Props) {
     if (!token) return ''
     const size = layout.barcode_size_px || 200
     return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(token)}`
+  }
+
+  const getDownloadUrl = (url?: string | null) => {
+    if (!url) return ''
+    if (url.startsWith('http')) return url
+    const token = localStorage.getItem('qentry_access_token') || ''
+    const tenantId = localStorage.getItem('qentry_tenant_id') || ''
+    const separator = url.includes('?') ? '&' : '?'
+    return `${url}${separator}token=${encodeURIComponent(token)}&tenant_id=${encodeURIComponent(tenantId)}`
   }
 
   const exportCsv = () => {
@@ -356,11 +371,13 @@ export function EventBarcodesTab({ event, stats, onlyHistory = false }: Props) {
                 )}
               </div>
 
-              <button onClick={handleGenerate} disabled={!isFormValid || isPending} className="inv-generate-btn">{isPending ? (<><Loader2 size={18} className="animate-spin" /> جاري توليد الدعوات...</>) : (<><Printer size={18} /> بدء التوليد ({totalInvitations} دعوة)</>)}</button>
+              <Can permission={PERM.INV_GENERATE}>
+                <button onClick={handleGenerate} disabled={!isFormValid || isPending} className="inv-generate-btn">{isPending ? (<><Loader2 size={18} className="animate-spin" /> جاري توليد الدعوات...</>) : (<><Printer size={18} /> بدء التوليد ({totalInvitations} دعوة)</>)}</button>
+              </Can>
 
               {(localError || (isError && error)) && (<div className="inv-toast inv-toast--error"><AlertCircle size={16} /> {localError || (error as any)?.message}</div>)}
             </div>
-            {data?.success && (<div className="inv-result"><div className="inv-result__info"><CheckCircle2 size={20} /><div><strong>تم توليد الدعوات بنجاح!</strong><span>{data.total_invitations} دعوة في {data.generation_time_ms}ms</span></div></div><div className="inv-result__actions">{data.pdf_url && (<a href={data.pdf_url} target="_blank" rel="noopener noreferrer" className="inv-dl-btn inv-dl-btn--pdf"><Download size={16} /> PDF ({data.pdf_size_mb?.toFixed(2)} MB)</a>)}{data.zip_url && (<a href={data.zip_url} target="_blank" rel="noopener noreferrer" className="inv-dl-btn inv-dl-btn--zip"><Download size={16} /> ZIP ({data.zip_size_mb?.toFixed(2)} MB)</a>)}</div></div>)}
+            {data?.success && (<div className="inv-result"><div className="inv-result__info"><CheckCircle2 size={20} /><div><strong>تم توليد الدعوات بنجاح!</strong><span>{data.total_invitations} دعوة في {data.generation_time_ms}ms</span></div></div><Can permission={PERM.BATCH_DOWNLOAD}><div className="inv-result__actions">{data.pdf_url && (<a href={data.pdf_url} target="_blank" rel="noopener noreferrer" className="inv-dl-btn inv-dl-btn--pdf"><Download size={16} /> PDF ({data.pdf_size_mb?.toFixed(2)} MB)</a>)}{data.zip_url && (<a href={data.zip_url} target="_blank" rel="noopener noreferrer" className="inv-dl-btn inv-dl-btn--zip"><Download size={16} /> ZIP ({data.zip_size_mb?.toFixed(2)} MB)</a>)}</div></Can></div>)}
           </section>
         </>
       )}
@@ -395,50 +412,104 @@ export function EventBarcodesTab({ event, stats, onlyHistory = false }: Props) {
             </div>
           ) : (
             <div className="inv-history-list">
-              {generationHistory.map((item, index) => (
-                <div className="inv-history-row" key={item.id}>
-                  <div className="inv-history-row__meta">
-                    <span className="inv-history-row__index">#{generationHistory.length - index}</span>
-                    <div>
-                      <strong>{item.total_invitations} دعوة</strong>
-                      <span>{formatGeneratedAt(item.generated_at)} · VIP {item.vip_count} · عادي {item.normal_count}</span>
+              {generationHistory.map((item, index) => {
+                const isRegistration = item.id === 'registration_submissions'
+                const isRsvp = item.id === 'rsvp_submissions'
+                const isDesigned = !isRegistration && !isRsvp && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.id)
+                
+                return (
+                  <div className="inv-history-row" key={item.id}>
+                    <div className="inv-history-row__meta">
+                      {isRegistration ? (
+                        <span className="inv-history-row__index inv-card__icon inv-card__icon--gold" style={{ display: 'flex', padding: 8, borderRadius: 6, width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}><Users size={16} /></span>
+                      ) : isRsvp ? (
+                        <span className="inv-history-row__index inv-card__icon inv-card__icon--blue" style={{ display: 'flex', padding: 8, borderRadius: 6, width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}><CheckCircle2 size={16} /></span>
+                      ) : isDesigned ? (
+                        <span className="inv-history-row__index inv-card__icon inv-card__icon--gold" style={{ display: 'flex', padding: 8, borderRadius: 6, width: 32, height: 32, alignItems: 'center', justifyContent: 'center', background: 'rgba(139, 92, 246, 0.1)', color: '#8b5cf6' }}><Sparkles size={16} /></span>
+                      ) : (
+                        <span className="inv-history-row__index">#{generationHistory.length - index}</span>
+                      )}
+                      <div>
+                        <strong>
+                          {isRegistration 
+                            ? 'التسجيل الذاتي (نماذج التسجيل)' 
+                            : isRsvp 
+                            ? 'تأكيدات الحضور (RSVP)' 
+                            : isDesigned 
+                            ? 'توليد من تصميم القالب' 
+                            : `${item.total_invitations} دعوة (توليد سريع)`}
+                        </strong>
+                        <span>
+                          {isRegistration ? (
+                            <>
+                              إجمالي المسجلين: {item.total_invitations} ضيف · VIP {item.vip_count} · عادي {item.normal_count}
+                              {item.generated_at && ` · آخر تسجيل: ${formatGeneratedAt(item.generated_at)}`}
+                            </>
+                          ) : isRsvp ? (
+                            <>
+                              إجمالي المدعوين: {item.total_invitations} ضيف · VIP {item.vip_count} · عادي {item.normal_count}
+                              {item.generated_at && ` · آخر تفاعل: ${formatGeneratedAt(item.generated_at)}`}
+                            </>
+                          ) : (
+                            <>
+                              {formatGeneratedAt(item.generated_at)}
+                              {' · '}VIP {item.vip_count} · عادي {item.normal_count}
+                            </>
+                          )}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="inv-history-row__actions">
+                      <Can permission={PERM.BATCH_DOWNLOAD}>
+                        {item.pdf_url && (
+                          <a href={getDownloadUrl(item.pdf_url)} target="_blank" rel="noopener noreferrer" className="inv-dl-btn inv-dl-btn--pdf">
+                            <FileText size={15} /> PDF
+                          </a>
+                        )}
+                        {item.zip_url && (
+                          <a href={getDownloadUrl(item.zip_url)} target="_blank" rel="noopener noreferrer" className="inv-dl-btn inv-dl-btn--zip">
+                            <Images size={15} /> ZIP
+                          </a>
+                        )}
+                      </Can>
+                      <button
+                        type="button"
+                        className="inv-dl-btn"
+                        onClick={() => setSelectedOperation(item.id)}
+                        title="عرض التفاصيل"
+                      >
+                        <FileText size={14} /> تفاصيل
+                      </button>
+                      <Can permission={PERM.BATCH_DELETE}>
+                        <button
+                          type="button"
+                          className="inv-dl-btn inv-dl-btn--danger"
+                          onClick={() => {
+                            const confirmMsg = isRegistration 
+                              ? 'هل أنت متأكد من إلغاء وحذف جميع دعوات التسجيل الذاتي لضيوف هذا النموذج؟'
+                              : isRsvp
+                              ? 'هل أنت متأكد من إلغاء وحذف جميع دعوات تأكيد الحضور (RSVP)؟'
+                              : isDesigned
+                              ? 'هل أنت متأكد من حذف دفعة توليد التصميم المخصص وإلغاء دعواتها؟'
+                              : `هل أنت متأكد من حذف عملية التوليد هذه؟`
+                            if (window.confirm(confirmMsg)) {
+                              deleteOperation(item.id)
+                            }
+                          }}
+                          disabled={isDeletingOperation && deletingOperationId === item.id}
+                        >
+                          {isDeletingOperation && deletingOperationId === item.id ? (
+                            <Loader2 size={15} className="animate-spin" />
+                          ) : (
+                            <Trash2 size={15} />
+                          )}
+                          حذف
+                        </button>
+                      </Can>
                     </div>
                   </div>
-                        <div className="inv-history-row__actions">
-                          {item.pdf_url && (
-                            <a href={item.pdf_url} target="_blank" rel="noopener noreferrer" className="inv-dl-btn inv-dl-btn--pdf">
-                              <FileText size={15} /> PDF
-                            </a>
-                          )}
-                          {item.zip_url && (
-                            <a href={item.zip_url} target="_blank" rel="noopener noreferrer" className="inv-dl-btn inv-dl-btn--zip">
-                              <Images size={15} /> ZIP
-                            </a>
-                          )}
-                          <button
-                            type="button"
-                            className="inv-dl-btn"
-                            onClick={() => setSelectedOperation(item.id)}
-                            title="عرض التفاصيل"
-                          >
-                            <FileText size={14} /> تفاصيل
-                          </button>
-                          <button
-                            type="button"
-                            className="inv-dl-btn inv-dl-btn--danger"
-                            onClick={() => deleteOperation(item.id)}
-                            disabled={isDeletingOperation && deletingOperationId === item.id}
-                          >
-                            {isDeletingOperation && deletingOperationId === item.id ? (
-                              <Loader2 size={15} className="animate-spin" />
-                            ) : (
-                              <Trash2 size={15} />
-                            )}
-                            حذف
-                          </button>
-                        </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>
@@ -446,99 +517,205 @@ export function EventBarcodesTab({ event, stats, onlyHistory = false }: Props) {
 
             {/* Operation details modal */}
             {selectedOperation && (
-              <div className="inv-modal-overlay" role="dialog" aria-modal="true">
-                <div className="inv-modal">
-                  <div className="inv-modal__header">
-                    <div className="inv-modal__title">
+              <div className="inv-modal-overlay" role="dialog" aria-modal="true" onClick={closeOperationDetails}>
+                <div className="inv-modal inv-modal--large" onClick={(e) => e.stopPropagation()}>
+                  
+                  {/* Modern Header */}
+                  <div className="inv-modal__header-premium">
+                    <div className="inv-modal__title-premium">
                       <h3>تفاصيل عملية التوليد</h3>
-                      <div className="inv-modal__meta">
-                        <span className="inv-badge">إجمالي: {operationInvitations.length}</span>
-                        <span className="inv-badge">مرشّح: {filteredInvitations.length}</span>
-                      </div>
+                      <p className="inv-modal__subtitle">إدارة ومتابعة كروت الدعوة والباركودات الصادرة لهذه الدفعة</p>
                     </div>
-                    <div className="inv-modal__toolbar" role="toolbar" aria-label="أدوات تفاصيل العملية">
-                      <input
-                        placeholder="بحث باسم الضيف أو التوكن أو جهة اتصال"
-                        value={filterQuery}
-                        onChange={(e) => setFilterQuery(e.target.value)}
-                        className="inv-input inv-input--sm inv-filter-input"
-                      />
-
-                      <select value={filterTicketClass} onChange={(e) => setFilterTicketClass(e.target.value as any)} className="inv-input inv-input--sm inv-filter-select">
-                        <option value="all">الكل</option>
-                        <option value="vip">VIP</option>
-                        <option value="normal">عادي</option>
-                      </select>
-
-                      <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="inv-input inv-input--sm inv-filter-select">
-                        <option value="all">الكل</option>
-                        {Array.from(new Set(operationInvitations.map((i) => i.status).filter(Boolean))).map((s) => (
-                          <option key={s} value={s}>{s}</option>
-                        ))}
-                      </select>
-
-                      <button
-                        type="button"
-                        className="inv-toolbar-btn"
-                        title={generateFallbackQr ? 'إيقاف QR احتياطي' : 'تشغيل QR احتياطي'}
-                        onClick={() => setGenerateFallbackQr((v) => !v)}
-                        aria-pressed={generateFallbackQr}
-                      >
-                        {generateFallbackQr ? <Eye size={14} /> : <EyeOff size={14} />}
-                      </button>
-
-                      <button type="button" className="inv-toolbar-btn" title="تصدير CSV" onClick={exportCsv}><Download size={14} /></button>
-
-                      <button className="inv-modal__close inv-toolbar-btn" onClick={closeOperationDetails} title="إغلاق">×</button>
-                    </div>
+                    <button className="inv-modal__close-premium" onClick={closeOperationDetails} title="إغلاق">
+                      <X size={18} />
+                    </button>
                   </div>
+
                   <div className="inv-modal__body">
-                    {isOperationLoading ? (
-                      <div className="center-loader"><Loader2 size={18} className="animate-spin" /> جاري التحميل...</div>
-                    ) : (
-                      <>
-                        <div className="inv-modal__files">
-                          {/* Show pdf/zip links if available for this operation */}
-                          {generationHistory.find((h) => h.id === selectedOperation)?.pdf_url && (
-                            <a href={generationHistory.find((h) => h.id === selectedOperation)!.pdf_url!} target="_blank" rel="noreferrer" className="inv-dl-btn inv-dl-btn--pdf"><FileText size={14} /> PDF</a>
-                          )}
-                          {generationHistory.find((h) => h.id === selectedOperation)?.zip_url && (
-                            <a href={generationHistory.find((h) => h.id === selectedOperation)!.zip_url!} target="_blank" rel="noreferrer" className="inv-dl-btn inv-dl-btn--zip"><Images size={14} /> ZIP</a>
-                          )}
+                    
+                    {/* Stats & Filters Bar */}
+                    <div className="inv-modal__filter-bar">
+                      <div className="filter-search-wrapper">
+                        <input
+                          placeholder="بحث باسم الضيف أو التوكن أو جهة اتصال"
+                          value={filterQuery}
+                          onChange={(e) => setFilterQuery(e.target.value)}
+                          className="inv-modal__search-input"
+                        />
+                      </div>
+                      
+                      <div className="filter-controls-wrapper">
+                        <div className="filter-select-group">
+                          <label>الفئة:</label>
+                          <select value={filterTicketClass} onChange={(e) => setFilterTicketClass(e.target.value as any)} className="inv-modal__select">
+                            <option value="all">الكل</option>
+                            <option value="vip">VIP</option>
+                            <option value="normal">عادي</option>
+                          </select>
                         </div>
 
-                        <div className="inv-op-list">
-                          <table className="inv-op-table">
-                            <thead>
-                              <tr>
-                                <th>رمز</th>
-                                <th>الضيف</th>
-                                <th>جهة اتصال</th>
-                                <th>رابط الدعوة</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {filteredInvitations.map((inv) => (
+                        <div className="filter-select-group">
+                          <label>الحالة:</label>
+                          <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="inv-modal__select">
+                            <option value="all">الكل</option>
+                            {Array.from(new Set(operationInvitations.map((i) => i.status).filter(Boolean))).map((s) => {
+                              const arStatus = s === 'created' ? 'تم الإنشاء' : s === 'accepted' ? 'مقبول' : s === 'viewed' ? 'تمت المشاهدة' : s === 'checked_in' ? 'تم الحضور' : s;
+                              return <option key={s} value={s}>{arStatus}</option>;
+                            })}
+                          </select>
+                        </div>
+
+                        <div className="action-buttons-group">
+                          <button
+                            type="button"
+                            className={`inv-modal__action-btn ${generateFallbackQr ? 'active' : ''}`}
+                            title={generateFallbackQr ? 'إيقاف عرض الـ QR الاحتياطي' : 'عرض الـ QR الاحتياطي'}
+                            onClick={() => setGenerateFallbackQr((v) => !v)}
+                          >
+                            {generateFallbackQr ? <Eye size={15} /> : <EyeOff size={15} />}
+                            <span>QR احتياطي</span>
+                          </button>
+
+                          <Can permission={PERM.INV_EXPORT}>
+                            <button
+                              type="button"
+                              className="inv-modal__action-btn"
+                              title="تصدير البيانات إلى CSV"
+                              onClick={exportCsv}
+                            >
+                              <Download size={15} />
+                              <span>تصدير CSV</span>
+                            </button>
+                          </Can>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Stats Summary Panel */}
+                    <div className="inv-modal__stats-panel">
+                      <div className="stat-pill total">
+                        <span className="label">إجمالي الدعوات:</span>
+                        <span className="value">{operationInvitations.length}</span>
+                      </div>
+                      <div className="stat-pill filtered">
+                        <span className="label">المطابقة للبحث:</span>
+                        <span className="value">{filteredInvitations.length}</span>
+                      </div>
+                      
+                      {/* Show PDF/ZIP links directly inside this stats panel */}
+                      <Can permission={PERM.BATCH_DOWNLOAD}>
+                      <div className="file-downloads-group">
+                        {generationHistory.find((h) => h.id === selectedOperation)?.pdf_url && (
+                          <a
+                            href={generationHistory.find((h) => h.id === selectedOperation)!.pdf_url!}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inv-modal__download-file-btn pdf"
+                          >
+                            <FileText size={14} />
+                            <span>تنزيل PDF</span>
+                          </a>
+                        )}
+                        {generationHistory.find((h) => h.id === selectedOperation)?.zip_url && (
+                          <a
+                            href={generationHistory.find((h) => h.id === selectedOperation)!.zip_url!}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inv-modal__download-file-btn zip"
+                          >
+                            <Images size={14} />
+                            <span>تنزيل ZIP</span>
+                          </a>
+                        )}
+                      </div>
+                      </Can>
+                    </div>
+
+                    {isOperationLoading ? (
+                      <div className="center-loader">
+                        <Loader2 size={24} className="animate-spin" />
+                        <span>جاري تحميل بيانات المدعوين...</span>
+                      </div>
+                    ) : filteredInvitations.length === 0 ? (
+                      <div className="inv-modal__empty-state">
+                        <AlertCircle size={32} />
+                        <span>لم يتم العثور على أي نتائج تطابق خيارات البحث الحالية.</span>
+                      </div>
+                    ) : (
+                      <div className="inv-modal__table-container">
+                        <table className="inv-modal__table">
+                          <thead>
+                            <tr>
+                              <th>الرمز (QR)</th>
+                              <th>بيانات الضيف</th>
+                              <th>جهة الاتصال</th>
+                              <th>رابط الدعوة والإجراءات</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {filteredInvitations.map((inv) => {
+                              const isVip = inv.ticket_class === 'vip';
+                              const status = inv.status;
+                              let statusLabel = status;
+                              let statusClass = 'status-default';
+                              if (status === 'created') {
+                                statusLabel = 'تم الإنشاء';
+                                statusClass = 'status-created';
+                              } else if (status === 'accepted') {
+                                statusLabel = 'مقبول';
+                                statusClass = 'status-accepted';
+                              } else if (status === 'viewed') {
+                                statusLabel = 'تمت المشاهدة';
+                                statusClass = 'status-viewed';
+                              } else if (status === 'checked_in') {
+                                statusLabel = 'تم الحضور';
+                                statusClass = 'status-checked-in';
+                              }
+
+                              return (
                                 <tr key={inv.id}>
                                   <td>
-                                    {inv.barcode_png_url || (generateFallbackQr && inv.token) ? (
-                                      <img src={inv.barcode_png_url ?? fallbackQrUrl(inv.token)} alt="qr" className="inv-op-row__img" />
-                                    ) : (
-                                      <div className="inv-op-row__img--empty">لا صورة</div>
-                                    )}
-                                  </td>
-                                  <td className="inv-op-row__meta">
-                                    <strong>{inv.guest_name ?? '—'}</strong>
-                                    <span className="inv-op-row__sub">{inv.ticket_class ?? '—'} · {inv.status ?? '—'}</span>
+                                    <div className="qr-preview-wrapper">
+                                      {inv.barcode_png_url || (generateFallbackQr && inv.token) ? (
+                                        <img src={inv.barcode_png_url ?? fallbackQrUrl(inv.token)} alt="qr" className="qr-preview-img" />
+                                      ) : (
+                                        <div className="qr-preview-empty">بلا رمز</div>
+                                      )}
+                                    </div>
                                   </td>
                                   <td>
-                                    {inv.guest_whatsapp ?? inv.guest_phone ?? inv.guest_email ?? '—'}
+                                    <div className="guest-info-cell">
+                                      <strong className="guest-name">{inv.guest_name ?? '—'}</strong>
+                                      <div className="guest-badges">
+                                        <span className={`class-badge ${isVip ? 'vip' : 'normal'}`}>
+                                          {isVip ? '👑 VIP' : '🎫 عادي'}
+                                        </span>
+                                        {status && (
+                                          <span className={`status-badge ${statusClass}`}>
+                                            {statusLabel}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </td>
+                                  <td>
+                                    <div className="contact-info-cell">
+                                      {inv.guest_whatsapp || inv.guest_phone || inv.guest_email ? (
+                                        <>
+                                          {inv.guest_whatsapp && <span className="contact-item whatsapp">💬 {inv.guest_whatsapp}</span>}
+                                          {inv.guest_phone && !inv.guest_whatsapp && <span className="contact-item phone">📞 {inv.guest_phone}</span>}
+                                          {inv.guest_email && <span className="contact-item email">📧 {inv.guest_email}</span>}
+                                        </>
+                                      ) : (
+                                        <span className="text-muted">—</span>
+                                      )}
+                                    </div>
                                   </td>
                                   <td>
                                     {inv.token ? (
-                                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                                      <div className="action-buttons-cell">
                                         <button
-                                          className="inv-dl-btn"
+                                          className="action-btn copy"
                                           onClick={() => {
                                             const url = `${window.location.origin}/i/${inv.token}`
                                             navigator.clipboard?.writeText(url)
@@ -546,27 +723,30 @@ export function EventBarcodesTab({ event, stats, onlyHistory = false }: Props) {
                                           }}
                                           title="نسخ رابط الدعوة"
                                         >
-                                          <Copy size={13} /> نسخ الرابط
+                                          <Copy size={13} />
+                                          <span>نسخ الرابط</span>
                                         </button>
                                         <a
                                           href={`/i/${inv.token}`}
                                           target="_blank"
                                           rel="noreferrer"
-                                          className="inv-dl-btn"
-                                          title="عرض الدعوة"
-                                          style={{ textDecoration: 'none' }}
+                                          className="action-btn view"
+                                          title="عرض صفحة الدعوة"
                                         >
-                                          <Eye size={13} /> عرض
+                                          <Eye size={13} />
+                                          <span>عرض</span>
                                         </a>
                                       </div>
-                                    ) : '—'}
+                                    ) : (
+                                      <span className="text-muted">—</span>
+                                    )}
                                   </td>
                                 </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
                     )}
                   </div>
                 </div>

@@ -59,6 +59,15 @@ export const eventsAPI = {
     http.post<EventModel>('/events', data).then((r) => r.data),
   update: (eventId: string, data: EventUpdateRequest) =>
     http.patch<EventModel>(`/events/${eventId}`, data).then((r) => r.data),
+  uploadCover: (eventId: string, file: File) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    return http.post<{ cover_image_url: string }>(`/events/${eventId}/cover`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    }).then((r) => r.data)
+  },
   delete: (eventId: string) =>
     http.delete(`/events/${eventId}`).then((r) => r.data),
   publish: (eventId: string) =>
@@ -77,6 +86,8 @@ export const eventsAPI = {
     http.get<EventGate[]>(`/events/${eventId}/gates`).then((r) => r.data),
   createGate: (eventId: string, data: EventGateCreate) =>
     http.post<EventGate>(`/events/${eventId}/gates`, data).then((r) => r.data),
+  updateGate: (eventId: string, gateId: string, data: EventGateCreate) =>
+    http.put<EventGate>(`/events/${eventId}/gates/${gateId}`, data).then((r) => r.data),
   deleteGate: (eventId: string, gateId: string) =>
     http.delete(`/events/${eventId}/gates/${gateId}`).then((r) => r.data),
 

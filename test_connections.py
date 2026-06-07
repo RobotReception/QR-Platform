@@ -74,29 +74,29 @@ if __name__ == "__main__":
 
     # 1. Port checks
     print("\n🔌 PORT CHECKS:")
-    backend_ok = check_port("127.0.0.1", 8020, "Backend (FastAPI)")
-    supabase_api_ok = check_port("127.0.0.1", 54321, "Supabase API")
+    backend_ok = check_port("127.0.0.1", 8021, "Backend (FastAPI)")
+    supabase_api_ok = check_port("127.0.0.1", 54821, "Supabase API")
     supabase_db_ok = check_port("127.0.0.1", 5434, "Supabase DB (PostgreSQL)")
-    supabase_studio_ok = check_port("127.0.0.1", 54325, "Supabase Studio")
+    supabase_studio_ok = check_port("127.0.0.1", 54825, "Supabase Studio")
     frontend_ok = check_port("127.0.0.1", 5173, "Frontend (Vite)")
 
     # 2. HTTP checks
     print("\n🌐 HTTP ENDPOINT CHECKS:")
     if backend_ok:
-        check_http("http://127.0.0.1:8020/health", "Backend /health")
-        check_http("http://127.0.0.1:8020/docs", "Backend /docs")
+        check_http("http://127.0.0.1:8021/health", "Backend /health")
+        check_http("http://127.0.0.1:8021/docs", "Backend /docs")
     else:
         print("  ⏭️  Skipping backend HTTP checks (port closed)")
 
     if supabase_api_ok:
-        check_http("http://127.0.0.1:54321/rest/v1/", "Supabase REST API")
+        check_http("http://127.0.0.1:54821/rest/v1/", "Supabase REST API")
     else:
         print("  ⏭️  Skipping Supabase HTTP checks (port closed)")
 
     # 3. Signup test
     print("\n📝 SIGNUP TEST:")
     if backend_ok:
-        test_signup("http://127.0.0.1:8020/api/v1")
+        test_signup("http://127.0.0.1:8021/api/v1")
     else:
         print("  ⏭️  Skipping signup test (backend not running)")
 
@@ -104,7 +104,7 @@ if __name__ == "__main__":
     print("\n🔐 DIRECT SUPABASE AUTH TEST:")
     anon_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
     if supabase_api_ok:
-        test_supabase_auth("http://127.0.0.1:54321", anon_key)
+        test_supabase_auth("http://127.0.0.1:54821", anon_key)
     else:
         print("  ⏭️  Skipping Supabase auth test (API not running)")
 
@@ -114,9 +114,9 @@ if __name__ == "__main__":
     print("=" * 60)
     issues = []
     if not backend_ok:
-        issues.append("❌ Backend (FastAPI) is NOT running on port 8020")
+        issues.append("❌ Backend (FastAPI) is NOT running on port 8021")
     if not supabase_api_ok:
-        issues.append("❌ Supabase API is NOT running on port 54321")
+        issues.append("❌ Supabase API is NOT running on port 54821")
     if not supabase_db_ok:
         issues.append("❌ Supabase DB is NOT running on port 5434")
     if not frontend_ok:
@@ -130,7 +130,7 @@ if __name__ == "__main__":
         if not supabase_db_ok or not supabase_api_ok:
             print("    1. cd d:\\QR\\supabase && npx supabase start")
         if not backend_ok:
-            print("    2. cd d:\\QR && python -m uvicorn app.main:app --host 0.0.0.0 --port 8020 --reload")
+            print("    2. cd d:\\QR && python -m uvicorn app.main:app --host 0.0.0.0 --port 8021 --reload")
         if not frontend_ok:
             print("    3. cd d:\\QR\\frontend && npm run dev")
     else:

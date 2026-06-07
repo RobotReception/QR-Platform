@@ -1,0 +1,81 @@
+.roles-layout {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+.roles-sidebar {
+  padding: 20px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(15, 23, 42, 0.55);
+}
+
+.roles-sidebar h3 { margin: 0 0 12px; font-size: 14px; }
+
+.roles-list { list-style: none; margin: 0 0 16px; padding: 0; display: grid; gap: 4px; }
+
+.roles-list__item {
+  width: 100%; display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px; border-radius: 8px; border: 1px solid transparent;
+  background: transparent; color: var(--color-text); font-family: inherit;
+  font-size: 13px; cursor: pointer; text-align: right;
+}
+.roles-list__item:hover { background: rgba(201,169,110,0.08); }
+.roles-list__item--active {
+  background: rgba(201,169,110,0.12);
+  border-color: rgba(201,169,110,0.25);
+}
+
+.roles-badge {
+  margin-right: auto; font-size: 10px; padding: 2px 6px;
+  border-radius: 4px; background: rgba(255,255,255,0.08); color: var(--color-text-muted);
+}
+
+.roles-create { display: grid; gap: 8px; }
+.roles-create input {
+  padding: 8px 10px; border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(0,0,0,0.25); color: var(--color-text); font-family: inherit;
+}
+
+.roles-matrix {
+  padding: 24px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(15, 23, 42, 0.55);
+  max-height: calc(100vh - 180px);
+  overflow-y: auto;
+}
+
+.roles-matrix__header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 20px; flex-wrap: wrap; gap: 12px;
+}
+.roles-matrix__header h2 { margin: 0; font-size: 18px; }
+.roles-matrix__actions { display: flex; gap: 8px; }
+
+.roles-hint { color: var(--color-text-muted); font-size: 14px; }
+
+.roles-group { margin-bottom: 24px; }
+.roles-group h4 {
+  margin: 0 0 10px; font-size: 13px; color: #c9a96e;
+  border-bottom: 1px solid rgba(201,169,110,0.15); padding-bottom: 6px;
+}
+
+.roles-checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 8px; }
+
+.roles-check {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border-radius: 8px;
+  background: rgba(0,0,0,0.2); font-size: 13px; cursor: pointer;
+}
+.roles-check code {
+  margin-right: auto; font-size: 10px; color: var(--color-text-muted);
+  direction: ltr;
+}
+
+@media (max-width: 900px) {
+  .roles-layout { grid-template-columns: 1fr; }
+}

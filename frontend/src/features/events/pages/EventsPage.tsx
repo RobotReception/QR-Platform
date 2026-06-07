@@ -4,7 +4,8 @@
  * UI state delegated to useEventsStore, rendering delegated to components.
  */
 import { useState } from 'react'
-import { Plus, CalendarDays, Search, Filter, RefreshCw } from 'lucide-react'
+import { useNavigate, Navigate } from 'react-router-dom'
+import { Plus, CalendarDays, Search, Filter, RefreshCw, LayoutGrid, List } from 'lucide-react'
 import { WorkspaceShell } from '@features/workspace/components/WorkspaceShell'
 import { useAuthStore } from '@features/auth/store/authStore'
 import { useEventsList } from '../hooks/useEvents'
@@ -12,6 +13,8 @@ import { useEventsStore } from '../store/eventsStore'
 import { EventCard } from '../components/EventCard'
 import { EventSkeletonGrid } from '../components/EventSkeletonCard'
 import { CreateEventDialog } from '../components/CreateEventDialog'
+import { Can, PERM, usePermission } from '@shared/permissions'
+import { getStatusConfig, formatDateShort } from '../utils/eventUtils'
 import type { EventStatus } from '../types'
 import '@features/users/pages/users.css'
 import './events.css'
@@ -26,8 +29,23 @@ const STATUS_OPTIONS: { value: EventStatus | ''; label: string }[] = [
 ]
 
 export default function EventsPage() {
+  const navigate = useNavigate()
   const currentTenantId = useAuthStore((s) => s.currentTenantId)
+
+  // Guard
+  const hasAccess = usePermission(PERM.NAV_EVENTS)
+  if (!hasAccess) {
+    return <Navigate to="/dashboard" replace />
+  }
   const [showCreateDialog, setShowCreateDialog] = useState(false)
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>(() => {
+    return (localStorage.getItem('qr-events-view-mode') as 'grid' | 'list') || 'grid'
+  })
+
+  const handleViewModeChange = (mode: 'grid' | 'list') => {
+    setViewMode(mode)
+    localStorage.setItem('qr-events-view-mode', mode)
+  }
 
   // UI state from Zustand
   const { searchQuery, statusFilter, setSearchQuery, setStatusFilter } = useEventsStore()
@@ -66,10 +84,12 @@ export default function EventsPage() {
       title="الأحداث"
       subtitle="إدارة كافة الفعاليات والمناسبات الخاصة بمساحة العمل"
       actions={
-        <button className="btn btn-primary" onClick={() => setShowCreateDialog(true)}>
-          <Plus size={18} />
-          حدث جديد
-        </button>
+        <Can permission={PERM.EVENT_CREATE}>
+          <button className="btn btn-primary" onClick={() => setShowCreateDialog(true)}>
+            <Plus size={18} />
+            حدث جديد
+          </button>
+        </Can>
       }
     >
       {/* ── Toolbar ── */}
@@ -115,6 +135,27 @@ export default function EventsPage() {
               ))}
             </select>
           </div>
+
+          <div className="view-toggles">
+            <button
+              type="button"
+              className={`view-toggle-btn ${viewMode === 'grid' ? 'view-toggle-btn--active' : ''}`}
+              onClick={() => handleViewModeChange('grid')}
+              title="عرض شبكي"
+              aria-label="عرض شبكي"
+            >
+              <LayoutGrid size={18} />
+            </button>
+            <button
+              type="button"
+              className={`view-toggle-btn ${viewMode === 'list' ? 'view-toggle-btn--active' : ''}`}
+              onClick={() => handleViewModeChange('list')}
+              title="عرض قائمة"
+              aria-label="عرض قائمة"
+            >
+              <List size={18} />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -129,11 +170,114 @@ export default function EventsPage() {
           onCreate={() => setShowCreateDialog(true)}
           onClear={() => { setSearchQuery(''); setStatusFilter('') }}
         />
-      ) : (
+      ) : viewMode === 'grid' ? (
         <div className="events-grid">
           {filtered.map((event) => (
             <EventCard key={event.id} event={event} />
           ))}
+        </div>
+      ) : (
+        <div className="events-list-container">
+          <div className="events-list-header">
+            <div className="events-list-header-col events-list-col--title">الحدث</div>
+            <div className="events-list-header-col events-list-col--date">التاريخ والوقت</div>
+            <div className="events-list-header-col events-list-col--venue">المكان</div>
+            <div className="events-list-header-col events-list-col--quota">حصة الحضور</div>
+            <div className="events-list-header-col events-list-col--status">الحالة</div>
+            <div className="events-list-header-col events-list-col--actions">الإجراءات</div>
+          </div>
+          <div className="events-list-body">
+            {filtered.map((event) => {
+              const { label, css } = getStatusConfig(event.status)
+              const accent = event.theme_color ?? '#c9a96e'
+              return (
+                <div
+                  key={event.id}
+                  className="events-list-row"
+                  onClick={() => navigate(`/events/${event.id}`)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => e.key === 'Enter' && navigate(`/events/${event.id}`)}
+                  aria-label={`عرض تفاصيل: ${event.title}`}
+                >
+                  {/* Title & Cover Image */}
+                  <div className="events-list-row-col events-list-col--title">
+                    <div
+                      className="events-list-row-thumb"
+                      style={{
+                        backgroundImage: event.cover_image_url ? `url(${event.cover_image_url})` : undefined,
+                        borderColor: `${accent}40`,
+                      }}
+                    >
+                      {!event.cover_image_url && (
+                        <CalendarDays size={16} style={{ color: accent }} />
+                      )}
+                    </div>
+                    <div className="events-list-row-title-wrap">
+                      <span className="events-list-row-title">{event.title}</span>
+                      <span className="events-list-row-badge">
+                        {event.allow_rsvp ? 'RSVP' : 'تذاكر'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Date */}
+                  <div className="events-list-row-col events-list-col--date">
+                    <CalendarDays size={14} className="events-list-row-icon" />
+                    <span>{formatDateShort(event.start_date)}</span>
+                  </div>
+
+                  {/* Venue */}
+                  <div className="events-list-row-col events-list-col--venue">
+                    {event.venue_name ? (
+                      <span>
+                        {event.venue_name}
+                        {event.venue_city ? `، ${event.venue_city}` : ''}
+                      </span>
+                    ) : (
+                      <span className="events-list-row-empty">—</span>
+                    )}
+                  </div>
+
+                  {/* Quotas */}
+                  <div className="events-list-row-col events-list-col--quota">
+                    <div className="events-list-row-quotas">
+                      {event.vip_quota > 0 && (
+                        <span className="quota-tag quota-tag--vip">VIP: {event.vip_quota}</span>
+                      )}
+                      {event.normal_quota > 0 && (
+                        <span className="quota-tag quota-tag--normal">عادي: {event.normal_quota}</span>
+                      )}
+                      {event.vip_quota === 0 && event.normal_quota === 0 && (
+                        <span className="events-list-row-empty">—</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Status */}
+                  <div className="events-list-row-col events-list-col--status">
+                    <span className={`event-card__status status-badge--${css}`} style={{ position: 'static', backdropFilter: 'none' }}>
+                      {label}
+                    </span>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="events-list-row-col events-list-col--actions">
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        navigate(`/events/${event.id}`)
+                      }}
+                    >
+                      عرض التفاصيل
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
         </div>
       )}
 

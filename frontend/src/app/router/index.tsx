@@ -11,11 +11,11 @@ const TeamsPage          = lazy(() => import('@features/teams/pages/TeamsPage'))
 const EventsPage         = lazy(() => import('@features/events/pages/EventsPage'))
 const EventDetailsPage   = lazy(() => import('@features/events/pages/EventDetailsPage'))
 const EventDesignEditorPage = lazy(() => import('@features/events/pages/EventDesignEditorPage'))
-const InvitationsPage    = lazy(() => import('@features/invitations/pages/InvitationsPage'))
 const PublicInvitationPage = lazy(() => import('@features/invitations/pages/PublicInvitationPage'))
 const PublicRegistrationPage = lazy(() => import('@features/invitations/pages/PublicRegistrationPage'))
-const GuestsPage         = lazy(() => import('@features/guests/pages/GuestsPage'))
-const CheckinPage        = lazy(() => import('@features/checkin/pages/CheckinPage'))
+const PlatformAdminPage  = lazy(() => import('@features/platform/pages/PlatformAdminPage'))
+const SettingsPage       = lazy(() => import('@features/settings/pages/SettingsPage'))
+const PayPalExecutePage  = lazy(() => import('@features/settings/pages/PayPalExecutePage'))
 
 function LoadingScreen() {
   return (
@@ -69,6 +69,18 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return isAuthenticated ? <>{children}</> : <Navigate to="/auth/login" replace />
 }
 
+function StaffRoute({ children }: { children: React.ReactNode }) {
+  const isAuthenticated = useAuthStore(s => s.isAuthenticated)
+  const user = useAuthStore(s => s.user)
+  const hasHydrated = useAuthHydrated()
+
+  if (!hasHydrated) return <LoadingScreen />
+  if (!isAuthenticated) return <Navigate to="/auth/login" replace />
+  if (!user?.is_staff) return <Navigate to="/dashboard" replace />
+
+  return <>{children}</>
+}
+
 function RootRedirect() {
   const isAuthenticated = useAuthStore(s => s.isAuthenticated)
   const hasHydrated = useAuthHydrated()
@@ -82,7 +94,7 @@ function RootRedirect() {
 
 export default function AppRouter() {
   return (
-    <BrowserRouter>
+    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <Suspense fallback={<LoadingScreen />}>
         <Routes>
           {/* ── Auth Routes ── */}
@@ -99,14 +111,19 @@ export default function AppRouter() {
           <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
           <Route path="/users"     element={<ProtectedRoute><UsersPage /></ProtectedRoute>} />
           <Route path="/teams"     element={<ProtectedRoute><TeamsPage /></ProtectedRoute>} />
+          <Route path="/guests" element={<Navigate to="/events" replace />} />
+          <Route path="/invitations" element={<Navigate to="/events" replace />} />
+          <Route path="/checkin" element={<Navigate to="/events" replace />} />
+          <Route path="/settings"  element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
+          <Route path="/settings/roles" element={<Navigate to="/platform" replace />} />
+          <Route path="/billing/paypal/execute" element={<ProtectedRoute><PayPalExecutePage /></ProtectedRoute>} />
 
           <Route path="/events"    element={<ProtectedRoute><EventsPage /></ProtectedRoute>} />
           <Route path="/events/:eventId" element={<ProtectedRoute><EventDetailsPage /></ProtectedRoute>} />
           <Route path="/events/:eventId/design" element={<ProtectedRoute><EventDesignEditorPage /></ProtectedRoute>} />
 
-          <Route path="/invitations" element={<ProtectedRoute><InvitationsPage /></ProtectedRoute>} />
-          <Route path="/guests"      element={<ProtectedRoute><GuestsPage /></ProtectedRoute>} />
-          <Route path="/checkin"     element={<ProtectedRoute><CheckinPage /></ProtectedRoute>} />
+          {/* ── Platform Admin (Staff Only) ── */}
+          <Route path="/platform" element={<StaffRoute><PlatformAdminPage /></StaffRoute>} />
 
           {/* ── Fallbacks ── */}
           <Route path="/"  element={<RootRedirect />} />
@@ -116,3 +133,4 @@ export default function AppRouter() {
     </BrowserRouter>
   )
 }
+

@@ -13,6 +13,7 @@ import { useInvitationsList, useUpdateInvitation } from '@features/invitations/h
 import type { RsvpStatus, TicketClass, Invitation } from '@features/invitations/types'
 import { RsvpDetailPanel } from './RsvpDetailPanel'
 import './event-rsvp-tab.css'
+import { Can, PERM } from '@shared/permissions'
 
 interface Props {
   eventId: string
@@ -36,13 +37,14 @@ export function EventRsvpTab({ eventId, allowRsvp = true }: Props) {
   const rsvpInvitations = useMemo(() => {
     if (!invitations) return []
     return invitations.filter((inv) => {
-      const isFromForm = inv.metadata && (inv.metadata.is_registration === true || inv.metadata.custom_fields !== undefined)
-      if (isFromForm) return false
-      
-      // If it's explicitly marked as require_rsvp
+      // 1. If explicitly marked as require_rsvp, include or exclude immediately
       if (inv.metadata?.require_rsvp === true) return true
       if (inv.metadata?.require_rsvp === false) return false
 
+      // 2. Exclude public self-registration form submissions
+      const isFromForm = inv.is_registration === true || (inv.metadata && inv.metadata.is_registration === true)
+      if (isFromForm) return false
+      
       // Fallback for legacy data: if it's not a form, and it was created as RSVP.
       // RSVP manual invites were created as 'created'/'pending' rsvp_status.
       // Direct invites were created as 'accepted'/'accepted' directly.
@@ -53,6 +55,10 @@ export function EventRsvpTab({ eventId, allowRsvp = true }: Props) {
       )
     })
   }, [invitations])
+
+  const isRsvpMode = useMemo(() => {
+    return !!(allowRsvp || rsvpInvitations.length > 0)
+  }, [allowRsvp, rsvpInvitations])
 
   const activeSelectedInv = useMemo(() => {
     if (!selectedInv || !rsvpInvitations) return null
@@ -120,7 +126,7 @@ export function EventRsvpTab({ eventId, allowRsvp = true }: Props) {
         inv.token?.includes(q)
 
       // RSVP Status / Delivery Filter
-      const matchesRsvp = allowRsvp
+      const matchesRsvp = isRsvpMode
         ? (rsvpFilter === 'all' || (inv.rsvp_status || 'pending') === rsvpFilter)
         : (rsvpFilter === 'all' || 
             (rsvpFilter === 'viewed' && (inv.status === 'viewed' || inv.status === 'accepted' || inv.status === 'declined' || inv.status === 'checked_in')) ||
@@ -133,18 +139,18 @@ export function EventRsvpTab({ eventId, allowRsvp = true }: Props) {
 
       return matchesSearch && matchesRsvp && matchesClass
     })
-  }, [rsvpInvitations, search, rsvpFilter, classFilter, allowRsvp])
+  }, [rsvpInvitations, search, rsvpFilter, classFilter, isRsvpMode])
 
   // ── Export CSV ──
   const handleExportCSV = () => {
     if (!filtered || filtered.length === 0) return
     
-    const headers = allowRsvp
+    const headers = isRsvpMode
       ? ["الاسم", "الهاتف", "فئة التذكرة", "حالة تأكيد الحضور", "عدد المرافقين", "تاريخ الرد", "الرسالة"]
       : ["الاسم", "الهاتف", "فئة التذكرة", "حالة المشاهدة", "تاريخ العرض والتسليم"]
 
     const rows = filtered.map(inv => {
-      if (allowRsvp) {
+      if (isRsvpMode) {
         return [
           inv.guest_name_ar || inv.guest_name || '',
           inv.guest_phone || '',
@@ -256,7 +262,7 @@ export function EventRsvpTab({ eventId, allowRsvp = true }: Props) {
           <strong>{stats.total}</strong>
         </div>
 
-        {allowRsvp ? (
+        {isRsvpMode ? (
           <>
             <div className="rsvp-metric-card rsvp-metric-card--accepted">
               <div className="rsvp-metric-card__header">
@@ -332,7 +338,7 @@ export function EventRsvpTab({ eventId, allowRsvp = true }: Props) {
             onChange={(e) => setRsvpFilter(e.target.value as any)}
             className="rsvp-filter-dropdown"
           >
-            {allowRsvp ? (
+            {isRsvpMode ? (
               <>
                 <option value="all">كل الحالات (RSVP)</option>
                 <option value="accepted">مؤكد الحضور</option>
@@ -359,14 +365,16 @@ export function EventRsvpTab({ eventId, allowRsvp = true }: Props) {
             <option value="normal">عادي</option>
           </select>
 
-          <button
-            className="btn btn-ghost"
-            onClick={handleExportCSV}
-            disabled={filtered.length === 0}
-          >
-            <Download size={15} />
-            <span>تصدير Excel</span>
-          </button>
+          <Can permission={PERM.RSVP_EXPORT}>
+            <button
+              className="btn btn-ghost"
+              onClick={handleExportCSV}
+              disabled={filtered.length === 0}
+            >
+              <Download size={15} />
+              <span>تصدير Excel</span>
+            </button>
+          </Can>
         </div>
       </div>
 
@@ -381,14 +389,13 @@ export function EventRsvpTab({ eventId, allowRsvp = true }: Props) {
         <div className="rsvp-table-container">
           <table className="rsvp-table">
             <thead>
-              {allowRsvp ? (
+              {isRsvpMode ? (
                 <tr>
                   <th>الاسم</th>
                   <th>الهاتف</th>
                   <th>فئة التذكرة</th>
                   <th>حالة RSVP</th>
                   <th>المرافقين</th>
-                  <th>قراءة الباركود</th>
                   <th>تاريخ الرد</th>
                   <th>رسالة الضيف</th>
                   <th>إجراءات يدوية</th>
@@ -423,7 +430,7 @@ export function EventRsvpTab({ eventId, allowRsvp = true }: Props) {
                       </span>
                     </td>
 
-                    {allowRsvp ? (
+                    {isRsvpMode ? (
                       <>
                         <td>
                           <span className={`rsvp-status-badge rsvp-status-badge--${status}`}>
@@ -432,17 +439,6 @@ export function EventRsvpTab({ eventId, allowRsvp = true }: Props) {
                         </td>
                         <td className="rsvp-td-center">
                           {status === 'accepted' ? inv.plus_one_count || 0 : <span className="rsvp-txt-muted">—</span>}
-                        </td>
-                        <td>
-                          {inv.checkin_count > 0 ? (
-                            <span className="rsvp-status-badge rsvp-status-badge--accepted" style={{ background: 'rgba(16, 185, 129, 0.08)', color: '#10b981', borderColor: 'rgba(16, 185, 129, 0.15)' }}>
-                              تم الدخول ({inv.checkin_count})
-                            </span>
-                          ) : (
-                            <span className="rsvp-status-badge rsvp-status-badge--pending" style={{ color: '#94a3b8', background: 'rgba(148, 163, 184, 0.08)', borderColor: 'rgba(148, 163, 184, 0.15)' }}>
-                              لم يحضر
-                            </span>
-                          )}
                         </td>
                         <td>
                           {inv.rsvp_at ? (
@@ -465,6 +461,7 @@ export function EventRsvpTab({ eventId, allowRsvp = true }: Props) {
                             {updatingId === inv.id ? (
                               <Loader2 size={16} className="spin" style={{ color: 'var(--color-primary)' }} />
                             ) : (
+                              <Can permission={PERM.RSVP_UPDATE}>
                               <>
                                 {status !== 'accepted' && (
                                   <button
@@ -494,6 +491,7 @@ export function EventRsvpTab({ eventId, allowRsvp = true }: Props) {
                                   </button>
                                 )}
                               </>
+                              </Can>
                             )}
                           </div>
                         </td>
@@ -565,7 +563,7 @@ export function EventRsvpTab({ eventId, allowRsvp = true }: Props) {
         onClose={() => setSelectedInv(null)}
         onUpdateRsvp={handleManualRsvp}
         isUpdating={updatingId !== null}
-        allowRsvp={allowRsvp}
+        allowRsvp={isRsvpMode}
       />
     </div>
   )

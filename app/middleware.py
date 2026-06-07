@@ -32,6 +32,8 @@ TENANT_EXEMPT_PATHS = {
     "/api/v1/auth/refresh",
     "/api/v1/auth/me",
     "/api/v1/plans",
+    "/api/v1/addons",
+    "/api/v1/custom-plans/calculate",
     "/api/v1/invites/accept",
     "/api/v1/webhooks/stripe",
     "/api/v1/tenants",

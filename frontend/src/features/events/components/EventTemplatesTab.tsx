@@ -10,27 +10,142 @@ import { Plus, Eye, Trash2, Download, AlertCircle, Loader2, Pencil } from 'lucid
 import { useAuthStore } from '@features/auth/store/authStore'
 import { templatesApi } from '@features/events/api/templatesApi'
 import './EventTemplatesTab.css'
+import { Can, PERM } from '@shared/permissions'
 
 interface EventTemplatesTabProps {
   eventId: string
+  event: any
   isActiveTab: boolean
 }
 
-export function EventTemplatesTab({ eventId, isActiveTab }: EventTemplatesTabProps) {
+export function EventTemplatesTab({ eventId, event, isActiveTab }: EventTemplatesTabProps) {
   const navigate = useNavigate()
   const [selectedTemplate, setSelectedTemplate] = useState<any>(null)
   const [showPreviewModal, setShowPreviewModal] = useState(false)
-  const [previewData, setPreviewData] = useState({
+  const [activePreviewFields, setActivePreviewFields] = useState<any[]>([])
+  const [previewData, setPreviewData] = useState<any>({
     guest_name: 'أحمد علي',
+    guest_phone: '',
+    guest_email: '',
+    guest_company: '',
+    guest_title: '',
     event_title: 'حفل تخرج',
     event_date: '2025-06-15',
     event_time: '19:00',
     event_location: 'فندق الريتز',
     seat_number: 'A12',
     table_number: '5',
+    custom_data: {},
   })
 
   const tenantId = useAuthStore((s) => s.currentTenantId)
+
+  // Helper functions for field detection
+  const mapElementToField = (el: any) => {
+    const etype = el.element_type
+    const dk = el.data_key || ''
+
+    if (etype === 'guest_name') {
+      return { key: 'guest_name', label: 'اسم الضيف', type: 'text', defaultValue: 'أحمد علي' }
+    }
+    if (etype === 'event_title') {
+      return { key: 'event_title', label: 'عنوان الحفل', type: 'text', defaultValue: event?.title || 'حفل تخرج' }
+    }
+    if (etype === 'event_date') {
+      const parts = event?.start_date?.split('T') || []
+      return { key: 'event_date', label: 'تاريخ الحفل', type: 'date', defaultValue: parts[0] || '2025-06-15' }
+    }
+    if (etype === 'event_time') {
+      const parts = event?.start_date?.split('T') || []
+      const defaultTime = parts[1] ? parts[1].substring(0, 5) : '19:00'
+      return { key: 'event_time', label: 'وقت الحفل', type: 'time', defaultValue: defaultTime }
+    }
+    if (etype === 'event_location') {
+      return { key: 'event_location', label: 'مكان الحفل', type: 'text', defaultValue: event?.venue_name || 'فندق الريتز' }
+    }
+    if (etype === 'seat_number') {
+      return { key: 'seat_number', label: 'رقم المقعد', type: 'text', defaultValue: 'A12' }
+    }
+    if (etype === 'table_number') {
+      return { key: 'table_number', label: 'رقم الطاولة', type: 'text', defaultValue: '5' }
+    }
+    if (etype === 'gate') {
+      return { key: 'gate', label: 'البوابة', type: 'text', defaultValue: 'البوابة الرئيسية', isCustomData: true, customKey: 'gate' }
+    }
+    if (etype === 'hall') {
+      return { key: 'hall', label: 'القاعة', type: 'text', defaultValue: 'القاعة الكبرى', isCustomData: true, customKey: 'hall' }
+    }
+
+    if (etype === 'dynamic_text' && dk) {
+      const keyNorm = dk.trim().toLowerCase()
+      
+      if (['guest.name', 'guest.name_ar', 'guest_name', 'name', 'الاسم', 'اسم الضيف', 'guestname', 'اسم_الضيف'].includes(keyNorm)) {
+        return { key: 'guest_name', label: 'اسم الضيف', type: 'text', defaultValue: 'أحمد علي' }
+      }
+      if (['guest.phone', 'guest_phone', 'phone', 'الجوال', 'رقم الجوال', 'رقم الهاتف', 'الهاتف'].includes(keyNorm)) {
+        return { key: 'guest_phone', label: 'رقم الجوال', type: 'text', defaultValue: '0500000000' }
+      }
+      if (['guest.email', 'guest_email', 'email', 'البريد', 'البريد الإلكتروني'].includes(keyNorm)) {
+        return { key: 'guest_email', label: 'البريد الإلكتروني', type: 'text', defaultValue: 'guest@example.com' }
+      }
+      if (['guest.company', 'guest_company', 'company', 'الجهة', 'الجهة / الشركة', 'الشركة', 'جهة العمل'].includes(keyNorm)) {
+        return { key: 'guest_company', label: 'الجهة / الشركة', type: 'text', defaultValue: 'شركة التقنية' }
+      }
+      if (['guest.title', 'guest_title', 'title', 'المسمى الوظيفي', 'المنصب'].includes(keyNorm)) {
+        return { key: 'guest_title', label: 'المسمى الوظيفي', type: 'text', defaultValue: 'مدير عام' }
+      }
+      if (['event.title', 'event.title_ar', 'event_title', 'title', 'العنوان', 'اسم الفعالية', 'عنوان الفعالية'].includes(keyNorm)) {
+        return { key: 'event_title', label: 'عنوان الحفل', type: 'text', defaultValue: event?.title || 'حفل تخرج' }
+      }
+      if (['event.date', 'event_date', 'date', 'التاريخ', 'تاريخ', 'تاريخ الفعالية'].includes(keyNorm)) {
+        const parts = event?.start_date?.split('T') || []
+        return { key: 'event_date', label: 'تاريخ الحفل', type: 'date', defaultValue: parts[0] || '2025-06-15' }
+      }
+      if (['event.time', 'event_time', 'time', 'الوقت', 'وقت', 'وقت الفعالية'].includes(keyNorm)) {
+        const parts = event?.start_date?.split('T') || []
+        const defaultTime = parts[1] ? parts[1].substring(0, 5) : '19:00'
+        return { key: 'event_time', label: 'وقت الحفل', type: 'time', defaultValue: defaultTime }
+      }
+      if (['event.location', 'event.location_ar', 'event_location', 'location', 'المكان', 'الموقع', 'venue'].includes(keyNorm)) {
+        return { key: 'event_location', label: 'مكان الحفل', type: 'text', defaultValue: event?.venue_name || 'فندق الريتز' }
+      }
+      if (['custom.seat', 'seat_number', 'seat', 'رقم المقعد', 'المقعد'].includes(keyNorm)) {
+        return { key: 'seat_number', label: 'رقم المقعد', type: 'text', defaultValue: 'A12' }
+      }
+      if (['custom.table', 'table_number', 'table', 'الطاولة', 'رقم الطاولة'].includes(keyNorm)) {
+        return { key: 'table_number', label: 'رقم الطاولة', type: 'text', defaultValue: '5' }
+      }
+      if (['custom.gate', 'gate', 'البوابة', 'بوابة'].includes(keyNorm)) {
+        return { key: 'gate', label: 'البوابة', type: 'text', defaultValue: 'البوابة الرئيسية', isCustomData: true, customKey: 'gate' }
+      }
+      if (['custom.hall', 'hall', 'القاعة', 'قاعة'].includes(keyNorm)) {
+        return { key: 'hall', label: 'القاعة', type: 'text', defaultValue: 'القاعة الكبرى', isCustomData: true, customKey: 'hall' }
+      }
+
+      const cleanKey = dk.startsWith('custom.') ? dk.substring(7) : dk
+      const fieldLabel = el.label || cleanKey
+      return {
+        key: `custom_data.${cleanKey}`,
+        label: fieldLabel,
+        type: 'text',
+        defaultValue: `بيانات ${fieldLabel}`,
+        isCustomData: true,
+        customKey: cleanKey
+      }
+    }
+    return null
+  }
+
+  const detectFields = (elements: any[]) => {
+    const fieldsMap = new Map<string, any>()
+    for (const el of elements) {
+      const field = mapElementToField(el)
+      if (field && !fieldsMap.has(field.key)) {
+        fieldsMap.set(field.key, field)
+      }
+    }
+    return Array.from(fieldsMap.values())
+  }
 
   // جلب القوالب الخاصة بالحدث
   const { data: templates, isLoading, refetch } = useQuery({
@@ -54,10 +169,10 @@ export function EventTemplatesTab({ eventId, isActiveTab }: EventTemplatesTabPro
 
   // معاينة القالب
   const previewMutation = useMutation({
-    mutationFn: async (templateId: string) => {
+    mutationFn: async ({ templateId, data }: { templateId: string; data: any }) => {
       const response = await http.post(
         `/templates/${templateId}/preview`,
-        previewData,
+        data,
         {
           responseType: 'blob',
         }
@@ -68,8 +183,41 @@ export function EventTemplatesTab({ eventId, isActiveTab }: EventTemplatesTabPro
 
   const handlePreview = async (template: any) => {
     setSelectedTemplate(template)
-    await previewMutation.mutateAsync(template.id)
-    setShowPreviewModal(true)
+    try {
+      const elements = await templatesApi.getElements(template.id)
+      const fields = detectFields(elements)
+      setActivePreviewFields(fields)
+
+      const initialData: any = {
+        guest_name: '',
+        guest_phone: '',
+        guest_email: '',
+        guest_company: '',
+        guest_title: '',
+        event_title: '',
+        event_date: '',
+        event_time: '',
+        event_location: '',
+        seat_number: '',
+        table_number: '',
+        custom_data: {},
+      }
+
+      fields.forEach((f) => {
+        if (f.isCustomData) {
+          initialData.custom_data[f.customKey] = f.defaultValue
+        } else {
+          initialData[f.key] = f.defaultValue
+        }
+      })
+
+      setPreviewData(initialData)
+      setShowPreviewModal(true)
+      await previewMutation.mutateAsync({ templateId: template.id, data: initialData })
+    } catch (err) {
+      console.error('Failed to load preview:', err)
+      alert('فشل تحميل تفاصيل القالب للمعاينة')
+    }
   }
 
   const handleDelete = (template: any) => {
@@ -80,8 +228,27 @@ export function EventTemplatesTab({ eventId, isActiveTab }: EventTemplatesTabPro
 
   const handleDownloadPreview = async () => {
     if (!selectedTemplate) return
-    await previewMutation.mutateAsync(selectedTemplate.id)
-    // The preview is already loaded in previewMutation.data
+    try {
+      const response = await http.post(
+        `/templates/${selectedTemplate.id}/preview`,
+        previewData,
+        {
+          responseType: 'blob',
+        }
+      )
+      const blob = response.data
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `preview_${selectedTemplate.name || 'template'}.png`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      console.error('Failed to download preview image:', err)
+      alert('فشل تحميل المعاينة')
+    }
   }
 
   if (isLoading) {
@@ -103,10 +270,12 @@ export function EventTemplatesTab({ eventId, isActiveTab }: EventTemplatesTabPro
             إدارة القوالب المخصصة للدعوات - إضافة، معاينة، وحذف
           </p>
         </div>
-        <button className="btn btn-primary" onClick={() => navigate(`/events/${eventId}/design?mode=excel`)}>
-          <Plus size={16} />
-          قالب جديد
-        </button>
+        <Can permission={PERM.TMPL_CREATE}>
+          <button className="btn btn-primary" onClick={() => navigate(`/events/${eventId}/design?mode=excel`)}>
+            <Plus size={16} />
+            قالب جديد
+          </button>
+        </Can>
       </div>
 
       {/* Templates Grid */}
@@ -115,10 +284,12 @@ export function EventTemplatesTab({ eventId, isActiveTab }: EventTemplatesTabPro
           <AlertCircle size={48} />
           <h3>لا توجد قوالب</h3>
           <p>أنشئ قالب جديد لبدء تخصيص دعوات الحدث</p>
-          <button className="btn btn-primary" onClick={() => navigate(`/events/${eventId}/design?mode=excel`)}>
-            <Plus size={16} />
-            إنشاء قالب جديد
-          </button>
+          <Can permission={PERM.TMPL_CREATE}>
+            <button className="btn btn-primary" onClick={() => navigate(`/events/${eventId}/design?mode=excel`)}>
+              <Plus size={16} />
+              إنشاء قالب جديد
+            </button>
+          </Can>
         </div>
       ) : (
         <div className="templates-grid">
@@ -154,13 +325,15 @@ export function EventTemplatesTab({ eventId, isActiveTab }: EventTemplatesTabPro
 
               {/* Actions */}
               <div className="template-actions">
-                <button
-                  className="action-btn edit-btn"
-                  onClick={() => navigate(`/events/${eventId}/design?edit=${template.id}`)}
-                  title="تحرير التصميم"
-                >
-                  <Pencil size={16} />
-                </button>
+                <Can permission={PERM.TMPL_DESIGN}>
+                  <button
+                    className="action-btn edit-btn"
+                    onClick={() => navigate(`/events/${eventId}/design?edit=${template.id}`)}
+                    title="تحرير التصميم"
+                  >
+                    <Pencil size={16} />
+                  </button>
+                </Can>
                 <button
                   className="action-btn preview-btn"
                   onClick={() => handlePreview(template)}
@@ -173,26 +346,30 @@ export function EventTemplatesTab({ eventId, isActiveTab }: EventTemplatesTabPro
                     <Eye size={16} />
                   )}
                 </button>
-                <button
-                  className="action-btn download-btn"
-                  onClick={handleDownloadPreview}
-                  title="تحميل المعاينة"
-                  disabled={!selectedTemplate || previewMutation.isPending}
-                >
-                  <Download size={16} />
-                </button>
-                <button
-                  className="action-btn delete-btn"
-                  onClick={() => handleDelete(template)}
-                  title="حذف"
-                  disabled={deleteMutation.isPending}
-                >
-                  {deleteMutation.isPending ? (
-                    <Loader2 size={16} className="spin" />
-                  ) : (
-                    <Trash2 size={16} />
-                  )}
-                </button>
+                <Can permission={PERM.BATCH_DOWNLOAD}>
+                  <button
+                    className="action-btn download-btn"
+                    onClick={handleDownloadPreview}
+                    title="تحميل المعاينة"
+                    disabled={!selectedTemplate || previewMutation.isPending}
+                  >
+                    <Download size={16} />
+                  </button>
+                </Can>
+                <Can permission={PERM.TMPL_DELETE}>
+                  <button
+                    className="action-btn delete-btn"
+                    onClick={() => handleDelete(template)}
+                    title="حذف"
+                    disabled={deleteMutation.isPending}
+                  >
+                    {deleteMutation.isPending ? (
+                      <Loader2 size={16} className="spin" />
+                    ) : (
+                      <Trash2 size={16} />
+                    )}
+                  </button>
+                </Can>
               </div>
             </div>
           ))}
@@ -234,66 +411,39 @@ export function EventTemplatesTab({ eventId, isActiveTab }: EventTemplatesTabPro
               <div className="preview-data-editor">
                 <h3>بيانات الاختبار</h3>
                 <div className="preview-form">
-                  <div className="form-group">
-                    <label>اسم الضيف</label>
-                    <input
-                      type="text"
-                      value={previewData.guest_name}
-                      onChange={e => setPreviewData({ ...previewData, guest_name: e.target.value })}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>عنوان الحفل</label>
-                    <input
-                      type="text"
-                      value={previewData.event_title}
-                      onChange={e => setPreviewData({ ...previewData, event_title: e.target.value })}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>التاريخ</label>
-                    <input
-                      type="date"
-                      value={previewData.event_date}
-                      onChange={e => setPreviewData({ ...previewData, event_date: e.target.value })}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>الوقت</label>
-                    <input
-                      type="time"
-                      value={previewData.event_time}
-                      onChange={e => setPreviewData({ ...previewData, event_time: e.target.value })}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>المكان</label>
-                    <input
-                      type="text"
-                      value={previewData.event_location}
-                      onChange={e => setPreviewData({ ...previewData, event_location: e.target.value })}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>رقم المقعد</label>
-                    <input
-                      type="text"
-                      value={previewData.seat_number}
-                      onChange={e => setPreviewData({ ...previewData, seat_number: e.target.value })}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>رقم الطاولة</label>
-                    <input
-                      type="text"
-                      value={previewData.table_number}
-                      onChange={e => setPreviewData({ ...previewData, table_number: e.target.value })}
-                    />
-                  </div>
+                  {activePreviewFields.length === 0 ? (
+                    <p style={{ opacity: 0.6, fontSize: 13, marginBottom: 15 }}>لا توجد حقول ديناميكية في هذا القالب.</p>
+                  ) : (
+                    activePreviewFields.map((field) => (
+                      <div className="form-group" key={field.key}>
+                        <label>{field.label}</label>
+                        <input
+                          type={field.type}
+                          value={field.isCustomData ? (previewData.custom_data?.[field.customKey] ?? '') : (previewData[field.key] ?? '')}
+                          onChange={(e) => {
+                            if (field.isCustomData) {
+                              setPreviewData((prev: any) => ({
+                                ...prev,
+                                custom_data: {
+                                  ...prev.custom_data,
+                                  [field.customKey]: e.target.value
+                                }
+                              }))
+                            } else {
+                              setPreviewData((prev: any) => ({
+                                ...prev,
+                                [field.key]: e.target.value
+                              }))
+                            }
+                          }}
+                        />
+                      </div>
+                    ))
+                  )}
 
                   <button
                     className="btn btn-secondary"
-                    onClick={() => previewMutation.mutate(selectedTemplate?.id!)}
+                    onClick={() => previewMutation.mutate({ templateId: selectedTemplate?.id!, data: previewData })}
                     disabled={previewMutation.isPending}
                   >
                     {previewMutation.isPending ? (
@@ -316,13 +466,15 @@ export function EventTemplatesTab({ eventId, isActiveTab }: EventTemplatesTabPro
               >
                 إغلاق
               </button>
-              <button
-                className="btn btn-primary"
-                onClick={handleDownloadPreview}
-              >
-                <Download size={16} />
-                تحميل المعاينة
-              </button>
+              <Can permission={PERM.BATCH_DOWNLOAD}>
+                <button
+                  className="btn btn-primary"
+                  onClick={handleDownloadPreview}
+                >
+                  <Download size={16} />
+                  تحميل المعاينة
+                </button>
+              </Can>
             </div>
           </div>
         </div>

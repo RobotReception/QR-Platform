@@ -8,7 +8,8 @@ from app.auth import get_current_user, get_tenant_id_from_header, CurrentUser
 from app.config import get_settings
 from app.database import get_db
 from app.models.invite import InviteCreate, InviteRead
-from app.services.membership_service import require_admin, verify_membership
+from app.services.membership_service import verify_membership
+from app.services.permission_service import require_permission
 from app.services.usage_service import get_tenant_plan_limits, get_seats_count
 from app.services.audit_service import log_audit
 from app.services.email_service import send_invite_email
@@ -27,27 +28,13 @@ async def create_invite(
     user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Invite a user to the current tenant. Requires admin role."""
+    """Invite a user to the current tenant."""
     tenant_id = get_tenant_id_from_header(request)
-    await require_admin(db, tenant_id, user.id)
+    await require_permission(db, tenant_id, user.id, "members.manage")
 
-    # Check seats limit
-    plan_code, limits = await get_tenant_plan_limits(db, tenant_id)
-    seats_limit = next((l["value"] for l in limits if l["key"] == "seats_max"), -1)
-    if seats_limit != -1:
-        current_seats = await get_seats_count(db, tenant_id)
-        # Count pending invites too
-        pending_result = await db.execute(
-            text("SELECT COUNT(*) FROM invites WHERE tenant_id = :tid AND status = 'pending'"),
-            {"tid": str(tenant_id)},
-        )
-        pending_count = pending_result.scalar() or 0
-
-        if current_seats + pending_count >= seats_limit:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"Seats limit reached ({seats_limit}). Upgrade your plan.",
-            )
+    # ── Plan limit: seats_max (centralized) ──
+    from app.services.feature_service import check_seats_limit
+    await check_seats_limit(db, tenant_id)
 
     # Best-effort duplicate membership check.
     # Some deployments restrict direct reads from auth.users, so we avoid
@@ -153,7 +140,7 @@ async def list_invites(
 ):
     """List all invites for the current tenant."""
     tenant_id = get_tenant_id_from_header(request)
-    await require_admin(db, tenant_id, user.id)
+    await require_permission(db, tenant_id, user.id, "members.view")
 
     result = await db.execute(
         text("""
@@ -285,9 +272,9 @@ async def revoke_invite(
     user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Revoke a pending invite. Requires admin role."""
+    """Revoke a pending invite."""
     tenant_id = get_tenant_id_from_header(request)
-    await require_admin(db, tenant_id, user.id)
+    await require_permission(db, tenant_id, user.id, "members.manage")
 
     result = await db.execute(
         text("""

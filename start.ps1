@@ -28,7 +28,7 @@ try {
 # 1. Start Supabase (if not already running)
 Write-Host "`n[1/3] Starting Supabase..." -ForegroundColor Yellow
 $supStatus = .\supabase.exe status 2>&1
-if ($supStatus -match "API URL") {
+if ($supStatus -match "API URL" -or $supStatus -match "is running" -or $supStatus -match "Project URL") {
     Write-Host "  Supabase is already running." -ForegroundColor Green
 } else {
     Write-Host "  Starting Supabase (this may take a minute)..." -ForegroundColor Gray
@@ -53,8 +53,8 @@ if ($supStatus -match "API URL") {
 }
 
 # 2. Start Backend (FastAPI) in a new window
-Write-Host "`n[2/3] Starting Backend (FastAPI) on port 8020..." -ForegroundColor Yellow
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd d:\QR; Write-Host 'Backend starting...' -ForegroundColor Green; .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8020 --reload"
+Write-Host "`n[2/3] Starting Backend (FastAPI) on port 8021..." -ForegroundColor Yellow
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd d:\QR; Write-Host 'Backend starting...' -ForegroundColor Green; .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8021 --reload"
 
 Start-Sleep -Seconds 3
 
@@ -69,8 +69,8 @@ Write-Host "  All services started!" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Frontend:  http://localhost:5173" -ForegroundColor White
-Write-Host "  Backend:   http://localhost:8020" -ForegroundColor White
-Write-Host "  API Docs:  http://localhost:8020/docs" -ForegroundColor White
+Write-Host "  Backend:   http://localhost:8021" -ForegroundColor White
+Write-Host "  API Docs:  http://localhost:8021/docs" -ForegroundColor White
 Write-Host "  Supabase:  http://localhost:54825 (Studio)" -ForegroundColor White
 Write-Host "  DB:        localhost:5434" -ForegroundColor White
 Write-Host ""

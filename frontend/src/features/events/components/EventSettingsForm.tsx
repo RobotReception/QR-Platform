@@ -7,15 +7,17 @@ import { useState, useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Loader2, CheckCircle2, AlertCircle } from 'lucide-react'
+import { Loader2, CheckCircle2, AlertCircle, UploadCloud, Camera } from 'lucide-react'
 import type { EventModel, EventUpdateRequest } from '../types'
-import { useEventUpdate } from '../hooks/useEventDetails'
+import { useEventUpdate, useEventCoverUpload } from '../hooks/useEventDetails'
+import { usePermission } from '@shared/permissions'
 
 // ── Validation Schema ────────────────────────────────────────────
 const schema = z.object({
   title: z.string().min(3, 'العنوان يجب أن يكون 3 أحرف على الأقل'),
   start_date: z.string().min(1, 'التاريخ مطلوب'),
   venue_name: z.string().optional(),
+  venue_address: z.string().optional(),
   venue_city: z.string().optional(),
   vip_quota: z.number({ invalid_type_error: 'يجب أن يكون رقماً' }).min(0),
   normal_quota: z.number({ invalid_type_error: 'يجب أن يكون رقماً' }).min(0),
@@ -32,10 +34,50 @@ interface Props {
 }
 
 export function EventSettingsForm({ event, tenantId }: Props) {
+  const canEdit = usePermission('events.edit')
   const [toast, setToast] = useState<'success' | 'error' | null>(null)
   const [serverError, setServerError] = useState('')
+  const [uploadError, setUploadError] = useState('')
 
   const updateMutation = useEventUpdate(tenantId, event.id)
+  const coverUploadMutation = useEventCoverUpload(tenantId, event.id)
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    await uploadFile(file)
+  }
+
+  const uploadFile = async (file: File) => {
+    setUploadError('')
+    const validTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp']
+    if (!validTypes.includes(file.type)) {
+      setUploadError('الامتداد غير مدعوم. يرجى رفع صورة PNG, JPG أو WEBP')
+      return
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setUploadError('حجم الصورة كبير جداً. الحد الأقصى المسموح به هو 10 ميجابايت')
+      return
+    }
+
+    try {
+      await coverUploadMutation.mutateAsync(file)
+    } catch (err: any) {
+      setUploadError(err?.response?.data?.detail ?? 'فشل رفع الصورة، يرجى المحاولة لاحقاً')
+    }
+  }
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+  }
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault()
+    const file = e.dataTransfer.files?.[0]
+    if (file) {
+      await uploadFile(file)
+    }
+  }
 
   const {
     register,
@@ -50,6 +92,7 @@ export function EventSettingsForm({ event, tenantId }: Props) {
       title: event.title,
       start_date: new Date(event.start_date).toISOString().slice(0, 16),
       venue_name: event.venue_name ?? '',
+      venue_address: event.venue_address ?? '',
       venue_city: event.venue_city ?? '',
       vip_quota: event.vip_quota,
       normal_quota: event.normal_quota,
@@ -65,6 +108,7 @@ export function EventSettingsForm({ event, tenantId }: Props) {
       title: event.title,
       start_date: new Date(event.start_date).toISOString().slice(0, 16),
       venue_name: event.venue_name ?? '',
+      venue_address: event.venue_address ?? '',
       venue_city: event.venue_city ?? '',
       vip_quota: event.vip_quota,
       normal_quota: event.normal_quota,
@@ -113,6 +157,68 @@ export function EventSettingsForm({ event, tenantId }: Props) {
         </div>
       )}
 
+      {/* ── Section: Event Cover Image ── */}
+      <h3 className="section-title">غلاف الحدث</h3>
+      <div className="event-cover-upload-container">
+        {event.cover_image_url ? (
+          <div 
+            className="event-cover-preview"
+            style={{ backgroundImage: `url(${event.cover_image_url})` }}
+          >
+            <div className="event-cover-preview-overlay">
+              <label className="btn btn-secondary btn-sm cover-upload-btn">
+                {coverUploadMutation.isPending ? (
+                  <Loader2 size={14} className="spin" />
+                ) : (
+                  <Camera size={14} />
+                )}
+                <span>{coverUploadMutation.isPending ? 'جاري الرفع...' : 'تغيير الغلاف'}</span>
+                <input 
+                  type="file" 
+                  accept="image/*" 
+                  onChange={handleFileChange} 
+                  style={{ display: 'none' }} 
+                  disabled={coverUploadMutation.isPending}
+                />
+              </label>
+            </div>
+          </div>
+        ) : (
+          <div 
+            className="event-cover-dropzone"
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
+          >
+            <input 
+              type="file" 
+              id="event-cover-input"
+              accept="image/*" 
+              onChange={handleFileChange} 
+              style={{ display: 'none' }}
+              disabled={coverUploadMutation.isPending}
+            />
+            <label htmlFor="event-cover-input" className="event-cover-dropzone-label">
+              {coverUploadMutation.isPending ? (
+                <Loader2 size={32} className="spin gold-text" />
+              ) : (
+                <UploadCloud size={32} className="gold-text" />
+              )}
+              <div className="event-cover-dropzone-text">
+                <strong>اسحب صورة الغلاف هنا أو انقر لتصفح الملفات</strong>
+                <span>الصيغ المدعومة: PNG, JPG, WEBP (الحد الأقصى 10MB)</span>
+              </div>
+            </label>
+          </div>
+        )}
+        
+        {uploadError && (
+          <div className="cover-upload-error">
+            <AlertCircle size={14} />
+            <span>{uploadError}</span>
+          </div>
+        )}
+      </div>
+
       {/* ── Section: Basic Info ── */}
       <h3 className="section-title">البيانات الأساسية</h3>
       <div className="event-form-grid">
@@ -146,6 +252,14 @@ export function EventSettingsForm({ event, tenantId }: Props) {
         <div className="form-field">
           <label>المدينة</label>
           <input {...register('venue_city')} type="text" placeholder="مثال: الرياض" />
+        </div>
+        <div className="form-field" style={{ gridColumn: '1 / -1' }}>
+          <label>عنوان مكان الحدث</label>
+          <input
+            {...register('venue_address')}
+            type="text"
+            placeholder="مثال: طريق الملك فهد، حي العليا، الرياض"
+          />
         </div>
         <div className="form-field">
           <label>حصة تذاكر VIP</label>
@@ -193,22 +307,24 @@ export function EventSettingsForm({ event, tenantId }: Props) {
       </div>
 
       {/* ── Submit ── */}
-      <div className="form-actions">
-        <button
-          type="submit"
-          className="btn btn-primary"
-          disabled={!isDirty || isSubmitting || updateMutation.isPending}
-        >
-          {isSubmitting || updateMutation.isPending ? (
-            <>
-              <Loader2 size={16} className="spin" />
-              جاري الحفظ…
-            </>
-          ) : (
-            'حفظ التعديلات'
-          )}
-        </button>
-      </div>
+      {canEdit && (
+        <div className="form-actions">
+          <button
+            type="submit"
+            className="btn btn-primary"
+            disabled={!isDirty || isSubmitting || updateMutation.isPending}
+          >
+            {isSubmitting || updateMutation.isPending ? (
+              <>
+                <Loader2 size={16} className="spin" />
+                جاري الحفظ…
+              </>
+            ) : (
+              'حفظ التعديلات'
+            )}
+          </button>
+        </div>
+      )}
     </form>
   )
 }

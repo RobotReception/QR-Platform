@@ -1,0 +1,482 @@
+/**
+ * useQuickMode.ts
+ * Business logic for Quick Generation mode (barcode-only).
+ * Handles: manual guest entry, count-based generation, Excel import,
+ * RSVP validation, and generation trigger.
+ */
+import * as XLSX from 'xlsx'
+import type { InvitationStateReturn } from './useInvitationState'
+import type { FastInvitationItem } from '../../../api/invitationsApi'
+import {
+  isPhoneField,
+  isEmailField,
+  parseTicketClass,
+  RESERVED_FIELD_NAMES,
+  CORE_EXCEL_COLUMNS,
+} from '../types'
+import { formatCellValue } from '../../../utils/mappingUtils'
+import { EventModel } from '../../../types'
+
+export function useQuickMode(state: InvitationStateReturn, event: EventModel) {
+  const {
+    quickManualGuests, setQuickManualGuests,
+    quickFormName, setQuickFormName,
+    quickFormCount, setQuickFormCount,
+    quickFormClass,
+    quickDynamicFields, setQuickDynamicFields,
+    newQuickFieldName, setNewQuickFieldName,
+    quickFormPhone, setQuickFormPhone,
+    quickFormEmail, setQuickFormEmail,
+    quickFormCustomFields, setQuickFormCustomFields,
+    excelImportedGuests, setExcelImportedGuests,
+    setExcelImportFileName,
+    setExcelImportErrors,
+    setLocalError,
+    requireRsvp,
+    quickInputMode, setQuickInputMode,
+    generationSource, setGenerationSource,
+    vipCount, normalCount,
+    guestPrefix,
+    layout,
+    generate,
+    singleGuestName, setSingleGuestName,
+    singleGuestCount, setSingleGuestCount,
+    singleGuestClass, setSingleGuestClass,
+    setShowSingleGuestModal,
+  } = state
+
+  // ═══════════════════════════════════════════════════════════
+  // Quick Manual Guests
+  // ═══════════════════════════════════════════════════════════
+
+  const addQuickManualGuest = () => {
+    const name = quickFormName.trim()
+    if (!name) {
+      setLocalError('يرجى كتابة اسم الضيف')
+      return
+    }
+    if (requireRsvp) {
+      const phone = quickFormPhone.trim()
+      const email = quickFormEmail.trim()
+      if (!phone && !email) {
+        setLocalError('يجب إدخال رقم الجوال أو البريد الإلكتروني للضيف لتفعيل تأكيد الحضور (RSVP).')
+        return
+      }
+    }
+
+    const customFields: Record<string, string> = {}
+    quickDynamicFields.forEach((field) => {
+      customFields[field] = quickFormCustomFields[field] || ''
+    })
+
+    if (requireRsvp || quickFormPhone.trim()) {
+      customFields['رقم الجوال'] = quickFormPhone.trim()
+    }
+    if (requireRsvp || quickFormEmail.trim()) {
+      customFields['البريد الإلكتروني'] = quickFormEmail.trim()
+    }
+
+    setQuickManualGuests((prev) => [
+      ...prev,
+      {
+        guest_name: name,
+        invitation_count: quickFormCount,
+        ticket_class: quickFormClass,
+        custom_fields: customFields,
+      },
+    ])
+    setQuickFormName('')
+    setQuickFormPhone('')
+    setQuickFormEmail('')
+    setQuickFormCount(1)
+    setQuickFormCustomFields({})
+    setLocalError(null)
+  }
+
+  const deleteQuickManualGuest = (index: number) => {
+    setQuickManualGuests((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  const handleAddQuickField = () => {
+    const fieldName = newQuickFieldName.trim()
+    if (!fieldName) return
+    if (RESERVED_FIELD_NAMES.includes(fieldName)) {
+      setLocalError('هذا الاسم محجوز كحقل أساسي')
+      return
+    }
+    if (quickDynamicFields.includes(fieldName)) {
+      setLocalError('الحقل موجود بالفعل')
+      return
+    }
+    setQuickDynamicFields((prev) => [...prev, fieldName])
+    setNewQuickFieldName('')
+    setLocalError(null)
+  }
+
+  const removeQuickDynamicField = (fieldName: string) => {
+    setQuickDynamicFields((prev) => prev.filter((f) => f !== fieldName))
+    setQuickManualGuests((prev) => prev.map((g) => {
+      if (!g.custom_fields) return g
+      const updated = { ...g.custom_fields }
+      delete updated[fieldName]
+      return { ...g, custom_fields: updated }
+    }))
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Single Guest Add
+  // ═══════════════════════════════════════════════════════════
+
+  const addSingleGuest = () => {
+    const guestName = singleGuestName.trim()
+    if (!guestName) {
+      setLocalError('اكتب اسم الشخص أولاً')
+      return
+    }
+    if (!Number.isFinite(singleGuestCount) || singleGuestCount < 1) {
+      setLocalError('عدد الأشخاص يجب أن يكون 1 على الأقل')
+      return
+    }
+
+    setExcelImportedGuests((prev) => [
+      ...prev,
+      {
+        guest_name: guestName,
+        invitation_count: Math.floor(singleGuestCount),
+        ticket_class: singleGuestClass,
+      },
+    ])
+    setExcelImportErrors([])
+    setExcelImportFileName((prev) => prev || 'دعوات مضافة يدويًا')
+    setGenerationSource('quick')
+    setQuickInputMode('excel')
+    setSingleGuestName('')
+    setSingleGuestCount(1)
+    setSingleGuestClass('normal')
+    setLocalError(null)
+    setShowSingleGuestModal(false)
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Excel File Handling
+  // ═══════════════════════════════════════════════════════════
+
+  const handleGuestFileSelected = async (file: File | null, target: 'excel' | 'design') => {
+    if (!file) return
+    setLocalError(null)
+    if (target === 'excel') {
+      setExcelImportErrors([])
+    }
+
+    try {
+      const buffer = await file.arrayBuffer()
+      const workbook = XLSX.read(buffer, { type: 'array', cellDates: true, cellNF: true })
+      const firstSheet = workbook.Sheets[workbook.SheetNames[0]]
+      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet, { defval: '' })
+
+      const parsedRows: typeof excelImportedGuests = []
+      const errors: string[] = []
+
+      rows.forEach((row, index) => {
+        const guestName = String(row['اسم الضيف'] ?? row['guest_name'] ?? row['name'] ?? '').trim()
+        const invitationCountRaw = row['عدد الأشخاص'] ?? row['عدد الدعوات'] ?? row['invitation_count'] ?? row['count'] ?? 1
+        const invitationCount = Number(invitationCountRaw)
+        const ticketClass = parseTicketClass(row['نوع التذكرة'] ?? row['ticket_class'] ?? row['class'])
+
+        // Collect custom fields
+        const custom_fields: Record<string, string> = {}
+        for (const [key, value] of Object.entries(row)) {
+          if (!CORE_EXCEL_COLUMNS.includes(key)) {
+            if (value !== undefined && value !== null && value !== '') {
+              custom_fields[key] = String(formatCellValue(value))
+            }
+          }
+        }
+
+        if (!guestName) {
+          errors.push(`السطر ${index + 2}: اسم الضيف مفقود`)
+          return
+        }
+        if (!Number.isFinite(invitationCount) || invitationCount < 1 || invitationCount > 100) {
+          errors.push(`السطر ${index + 2}: عدد الدعوات يجب أن يكون بين 1 و100`)
+          return
+        }
+
+        parsedRows.push({
+          guest_name: guestName,
+          invitation_count: Math.floor(invitationCount),
+          ticket_class: ticketClass,
+          custom_fields,
+        })
+      })
+
+      if (!parsedRows.length) {
+        if (target === 'excel') {
+          setExcelImportErrors(errors.length ? errors : ['لم يتم العثور على صفوف صالحة داخل الملف'])
+          setExcelImportedGuests([])
+          setExcelImportFileName(file.name)
+        }
+        return
+      }
+
+      if (target === 'excel') {
+        setExcelImportedGuests(parsedRows)
+        setExcelImportFileName(file.name)
+        setExcelImportErrors(errors)
+        if (generationSource !== 'design') {
+          setGenerationSource('quick')
+          setQuickInputMode('excel')
+        }
+      }
+    } catch {
+      if (target === 'excel') {
+        setExcelImportedGuests([])
+        setExcelImportFileName(file.name)
+        setExcelImportErrors(['تعذر قراءة الملف. استخدم ملف Excel بصيغة .xlsx أو .xls'])
+      }
+    }
+  }
+
+  const clearImportedGuests = () => {
+    setExcelImportedGuests([])
+    setExcelImportFileName('')
+    setExcelImportErrors([])
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Excel Template Download
+  // ═══════════════════════════════════════════════════════════
+
+  const downloadQuickExcelTemplate = () => {
+    const headers = ['اسم الضيف', 'عدد الدعوات', 'نوع التذكرة']
+    if (requireRsvp) {
+      headers.push('رقم الجوال', 'البريد الإلكتروني')
+    }
+
+    const expectedRows = quickInputMode === 'names'
+      ? quickManualGuests.length
+      : quickInputMode === 'excel'
+      ? excelImportedGuests.length
+      : (vipCount + normalCount)
+
+    const rowsCount = expectedRows > 0 ? expectedRows : 5
+    const templateRows: any[] = []
+
+    if (quickInputMode === 'names' && quickManualGuests.length > 0) {
+      quickManualGuests.forEach((guest) => {
+        const row: Record<string, any> = {
+          'اسم الضيف': guest.guest_name,
+          'عدد الدعوات': guest.invitation_count,
+          'نوع التذكرة': guest.ticket_class === 'vip' ? 'VIP' : 'normal'
+        }
+        if (requireRsvp) {
+          const fields = guest.custom_fields || {}
+          const existingPhoneKey = Object.keys(fields).find(k => isPhoneField(k))
+          const existingEmailKey = Object.keys(fields).find(k => isEmailField(k))
+          row['رقم الجوال'] = existingPhoneKey ? fields[existingPhoneKey] : ''
+          row['البريد الإلكتروني'] = existingEmailKey ? fields[existingEmailKey] : ''
+        }
+        templateRows.push(row)
+      })
+    } else if (quickInputMode === 'excel' && excelImportedGuests.length > 0) {
+      excelImportedGuests.forEach((guest) => {
+        const row: Record<string, any> = {
+          'اسم الضيف': guest.guest_name,
+          'عدد الدعوات': guest.invitation_count,
+          'نوع التذكرة': guest.ticket_class === 'vip' ? 'VIP' : 'normal'
+        }
+        if (requireRsvp) {
+          const fields = guest.custom_fields || {}
+          const existingPhoneKey = Object.keys(fields).find(k => isPhoneField(k))
+          const existingEmailKey = Object.keys(fields).find(k => isEmailField(k))
+          row['رقم الجوال'] = existingPhoneKey ? fields[existingPhoneKey] : ''
+          row['البريد الإلكتروني'] = existingEmailKey ? fields[existingEmailKey] : ''
+        }
+        templateRows.push(row)
+      })
+    } else {
+      for (let i = 0; i < vipCount; i++) {
+        const row: Record<string, any> = {
+          'اسم الضيف': `ضيف VIP ${i + 1}`,
+          'عدد الدعوات': 1,
+          'نوع التذكرة': 'VIP'
+        }
+        if (requireRsvp) {
+          row['رقم الجوال'] = ''
+          row['البريد الإلكتروني'] = ''
+        }
+        templateRows.push(row)
+      }
+      for (let i = 0; i < normalCount; i++) {
+        const row: Record<string, any> = {
+          'اسم الضيف': `ضيف ${i + 1}`,
+          'عدد الدعوات': 1,
+          'نوع التذكرة': 'normal'
+        }
+        if (requireRsvp) {
+          row['رقم الجوال'] = ''
+          row['البريد الإلكتروني'] = ''
+        }
+        templateRows.push(row)
+      }
+      if (templateRows.length === 0) {
+        for (let i = 0; i < rowsCount; i++) {
+          const row: Record<string, any> = {
+            'اسم الضيف': `ضيف ${i + 1}`,
+            'عدد الدعوات': 1,
+            'نوع التذكرة': 'normal'
+          }
+          if (requireRsvp) {
+            row['رقم الجوال'] = ''
+            row['البريد الإلكتروني'] = ''
+          }
+          templateRows.push(row)
+        }
+      }
+    }
+
+    const workbook = XLSX.utils.book_new()
+    const worksheet = XLSX.utils.json_to_sheet(templateRows, { header: headers })
+    const guideWorksheet = XLSX.utils.json_to_sheet([
+      { 'الحقل': 'اسم الضيف', 'الوصف': 'اسم الضيف أو الجهة المدعوة', 'مطلوب': 'نعم', 'مثال': 'أحمد محمد' },
+      { 'الحقل': 'عدد الدعوات', 'الوصف': 'عدد الدعوات المطلوب توليدها لهذا الضيف', 'مطلوب': 'لا (الافتراضي 1)', 'مثال': '2' },
+      { 'الحقل': 'نوع التذكرة', 'الوصف': 'vip أو normal', 'مطلوب': 'لا (الافتراضي normal)', 'مثال': 'vip' },
+      ...(requireRsvp ? [
+        { 'الحقل': 'رقم الجوال', 'الوصف': 'رقم هاتف الضيف لإرسال الدعوة وطلب تأكيد الحضور', 'مطلوب': 'نعم (أو البريد)', 'مثال': '0501234567' },
+        { 'الحقل': 'البريد الإلكتروني', 'الوصف': 'البريد الإلكتروني لإرسال الدعوة وطلب تأكيد الحضور', 'مطلوب': 'نعم (أو الجوال)', 'مثال': 'ahmed@example.com' }
+      ] : [])
+    ])
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Guests')
+    XLSX.utils.book_append_sheet(workbook, guideWorksheet, 'Guide')
+    XLSX.writeFile(workbook, `guest-import-template-${event.id.slice(0, 8)}.xlsx`)
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Generate (Quick)
+  // ═══════════════════════════════════════════════════════════
+
+  const handleGenerate = () => {
+    if (generationSource !== 'quick') return
+    if (quickInputMode === 'excel' && excelImportedGuests.length === 0) return
+    if (quickInputMode === 'names' && quickManualGuests.length === 0) return
+    if (quickInputMode === 'manual' && vipCount === 0 && normalCount === 0) return
+
+    setLocalError(null)
+
+    // RSVP validation
+    if (requireRsvp) {
+      if (quickInputMode === 'manual') {
+        setLocalError('لا يمكن تفعيل تأكيد الحضور (RSVP) عند التوليد بالعدد لعدم وجود بيانات اتصال للضيوف.')
+        return
+      }
+      if (quickInputMode === 'names') {
+        const hasContactField = quickDynamicFields.some(field => isPhoneField(field) || isEmailField(field))
+        if (!hasContactField) {
+          setLocalError('يجب إضافة حقل مخصص للهاتف أو البريد الإلكتروني للضيوف وتعبئته لتفعيل تأكيد الحضور (RSVP).')
+          return
+        }
+        const invalidGuests = quickManualGuests.filter(g => {
+          const fields = g.custom_fields || {}
+          const hasPhone = Object.keys(fields).some(k => isPhoneField(k) && (fields[k] || '').trim())
+          const hasEmail = Object.keys(fields).some(k => isEmailField(k) && (fields[k] || '').trim())
+          return !hasPhone && !hasEmail
+        })
+        if (invalidGuests.length > 0) {
+          const names = invalidGuests.map(g => g.guest_name).join('، ')
+          setLocalError(`الضيوف التاليين يفتقرون لبيانات الاتصال (الهاتف أو البريد الإلكتروني): ${names}`)
+          return
+        }
+      }
+      if (quickInputMode === 'excel') {
+        const allCustomKeys = new Set<string>()
+        excelImportedGuests.forEach(g => {
+          Object.keys(g.custom_fields || {}).forEach(k => allCustomKeys.add(k))
+        })
+        const customKeysArray = Array.from(allCustomKeys)
+        const hasContactField = customKeysArray.some(field => isPhoneField(field) || isEmailField(field))
+        if (!hasContactField) {
+          setLocalError('يجب أن يحتوي ملف Excel على عمود لرقم الهاتف (مثل: الجوال، الهاتف) أو البريد الإلكتروني لتفعيل تأكيد الحضور (RSVP).')
+          return
+        }
+        const emptyRows: number[] = []
+        excelImportedGuests.forEach((g, index) => {
+          const fields = g.custom_fields || {}
+          const hasPhone = Object.keys(fields).some(k => isPhoneField(k) && (fields[k] || '').trim())
+          const hasEmail = Object.keys(fields).some(k => isEmailField(k) && (fields[k] || '').trim())
+          if (!hasPhone && !hasEmail) {
+            emptyRows.push(index + 2)
+          }
+        })
+        if (emptyRows.length > 0) {
+          setLocalError(`الصفوف التالية في ملف Excel تفتقر لبيانات الاتصال (رقم الهاتف أو البريد الإلكتروني): ${emptyRows.join(', ')}`)
+          return
+        }
+      }
+    }
+
+    // Build invitations array
+    const invitations: FastInvitationItem[] = []
+    if (quickInputMode === 'excel') {
+      excelImportedGuests.forEach((guest) => {
+        invitations.push({
+          guest_name: guest.guest_name,
+          ticket_class: guest.ticket_class,
+          guest_count: guest.invitation_count,
+          metadata: { require_rsvp: requireRsvp },
+          ...guest.custom_fields,
+        })
+      })
+    } else if (quickInputMode === 'names') {
+      quickManualGuests.forEach((guest) => {
+        invitations.push({
+          guest_name: guest.guest_name,
+          ticket_class: guest.ticket_class,
+          guest_count: guest.invitation_count,
+          metadata: { require_rsvp: requireRsvp },
+          ...guest.custom_fields,
+        })
+      })
+    } else {
+      for (let i = 0; i < vipCount; i++)
+        invitations.push({
+          guest_name: `${guestPrefix} VIP ${i + 1}`,
+          ticket_class: 'vip' as const,
+          metadata: { require_rsvp: requireRsvp },
+        })
+      for (let i = 0; i < normalCount; i++)
+        invitations.push({
+          guest_name: `${guestPrefix} ${i + 1}`,
+          ticket_class: 'normal' as const,
+          metadata: { require_rsvp: requireRsvp },
+        })
+    }
+
+    generate(
+      {
+        event_id: event.id,
+        invitations,
+        generate_pdf: true,
+        generate_zip: true,
+        upload_individual_barcodes: false,
+        layout_config: {
+          ...layout,
+          show_code_text: false,
+          show_guest_name: false,
+        },
+      },
+      { onError: (err: any) => setLocalError(err.response?.data?.detail || err.message || 'حدث خطأ غير متوقع') },
+    )
+  }
+
+  return {
+    addQuickManualGuest,
+    deleteQuickManualGuest,
+    handleAddQuickField,
+    removeQuickDynamicField,
+    addSingleGuest,
+    handleGuestFileSelected,
+    clearImportedGuests,
+    downloadQuickExcelTemplate,
+    handleGenerate,
+  }
+}

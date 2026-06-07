@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { Navigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -21,6 +22,7 @@ import {
   Search,
 } from 'lucide-react'
 import { WorkspaceShell } from '@features/workspace/components/WorkspaceShell'
+import { Can, PERM, usePermission } from '@shared/permissions'
 import { teamsAPI } from '../api/teamsApi'
 import { usersAPI } from '@features/users/api/usersApi'
 import { useAuthStore } from '@features/auth/store/authStore'
@@ -334,6 +336,12 @@ function ConfirmDeleteDialog({
 // ═══════════════════════════════════════════════════════
 export default function TeamsPage() {
   const currentTenantId = useAuthStore(s => s.currentTenantId)
+
+  // Guard
+  const hasAccess = usePermission(PERM.NAV_TEAMS)
+  if (!hasAccess) {
+    return <Navigate to="/dashboard" replace />
+  }
   const currentTenant = useAuthStore(s => s.tenants.find(t => t.tenant_id === currentTenantId))
   const queryClient = useQueryClient()
 
@@ -466,9 +474,11 @@ export default function TeamsPage() {
       subtitle={`${currentTenant?.name || 'مساحة العمل'} · تنظيم فرق التشغيل والتصميم والاستقبال`}
       actions={
         <div className="header-actions">
-          <button className="btn btn-primary" onClick={() => setShowCreateDialog(true)}>
-            <Plus size={16} /> إنشاء فريق
-          </button>
+          <Can permission={PERM.TEAM_CREATE}>
+            <button className="btn btn-primary" onClick={() => setShowCreateDialog(true)}>
+              <Plus size={16} /> إنشاء فريق
+            </button>
+          </Can>
           <button className="dash-icon-btn" onClick={() => teamsQuery.refetch()} aria-label="تحديث">
             <RefreshCcw size={18} />
           </button>
@@ -476,7 +486,7 @@ export default function TeamsPage() {
       }
     >
       {/* ── Stats ── */}
-      <section className="dash-stats-grid users-stats-grid">
+      <section className="dash-stats-grid teams-stats-grid">
         <div className="dash-stat">
           <div className="dash-stat__icon"><FolderKanban size={20} /></div>
           <div>
@@ -577,27 +587,31 @@ export default function TeamsPage() {
 
                     {/* Card Actions */}
                     <div className="team-card-v2__actions">
-                      <button
-                        className="action-btn"
-                        onClick={() => setEditingTeam(team)}
-                        title="تعديل"
-                      >
-                        <Edit3 size={14} />
-                      </button>
-                      <button
-                        className="action-btn"
-                        onClick={() => setArchivingTeam(team)}
-                        title={team.is_active ? 'أرشفة' : 'تفعيل'}
-                      >
-                        {team.is_active ? <Archive size={14} /> : <ArchiveRestore size={14} />}
-                      </button>
-                      <button
-                        className="action-btn action-btn--danger"
-                        onClick={() => setDeletingTeam(team)}
-                        title="حذف"
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      <Can permission={PERM.TEAM_MANAGE}>
+                        <button
+                          className="action-btn"
+                          onClick={() => setEditingTeam(team)}
+                          title="تعديل"
+                        >
+                          <Edit3 size={14} />
+                        </button>
+                      </Can>
+                      <Can permission={PERM.TEAM_ARCHIVE}>
+                        <button
+                          className="action-btn"
+                          onClick={() => setArchivingTeam(team)}
+                          title={team.is_active ? 'أرشفة' : 'تفعيل'}
+                        >
+                          {team.is_active ? <Archive size={14} /> : <ArchiveRestore size={14} />}
+                        </button>
+                        <button
+                          className="action-btn action-btn--danger"
+                          onClick={() => setDeletingTeam(team)}
+                          title="حذف"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </Can>
                       <button
                         className="action-btn"
                         onClick={() => setExpandedTeam(isExpanded ? null : team.id)}
@@ -618,15 +632,17 @@ export default function TeamsPage() {
                         >
                           <div className="members-header">
                             <span>أعضاء الفريق</span>
-                            <button
-                              className="btn btn-sm btn-primary"
-                              onClick={() => {
-                                setSelectedTeam(team)
-                                setShowAddMemberDialog(true)
-                              }}
-                            >
-                              <UserPlus size={14} /> إضافة
-                            </button>
+                            <Can permission={PERM.TEAM_MANAGE}>
+                              <button
+                                className="btn btn-sm btn-primary"
+                                onClick={() => {
+                                  setSelectedTeam(team)
+                                  setShowAddMemberDialog(true)
+                                }}
+                              >
+                                <UserPlus size={14} /> إضافة
+                              </button>
+                            </Can>
                           </div>
                           <div className="members-mini-list">
                             {teamMembers.length ? (
@@ -639,19 +655,21 @@ export default function TeamsPage() {
                                     <strong>{member.full_name || 'مستخدم'}</strong>
                                     <span>{teamRoleLabel[member.role]}</span>
                                   </div>
-                                  <button
-                                    className="action-btn action-btn--danger"
-                                    onClick={() =>
-                                      setRemovingMember({
-                                        teamId: team.id,
-                                        userId: member.user_id,
-                                        name: member.full_name || 'مستخدم',
-                                      })
-                                    }
-                                    title="إزالة"
-                                  >
-                                    <UserMinus size={12} />
-                                  </button>
+                                  <Can permission={PERM.TEAM_MANAGE}>
+                                    <button
+                                      className="action-btn action-btn--danger"
+                                      onClick={() =>
+                                        setRemovingMember({
+                                          teamId: team.id,
+                                          userId: member.user_id,
+                                          name: member.full_name || 'مستخدم',
+                                        })
+                                      }
+                                      title="إزالة"
+                                    >
+                                      <UserMinus size={12} />
+                                    </button>
+                                  </Can>
                                 </div>
                               ))
                             ) : (

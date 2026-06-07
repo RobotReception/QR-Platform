@@ -25,6 +25,7 @@ export {
   useEventGates,
   useEventUpdate,
   useEventPublish,
+  useEventCoverUpload,
   useGateCreate,
   useGateDelete,
 } from './hooks/useEventDetails'

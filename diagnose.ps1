@@ -47,14 +47,14 @@ if ($db.TcpTestSucceeded) {
     Write-Host "  -> Supabase DB is not running on port 5434" -ForegroundColor Red
 }
 
-# 4. Check port 8020 (Backend)
-Write-Host "[4/5] Backend (port 8020)..." -ForegroundColor Yellow -NoNewline
-$backend = Test-NetConnection -ComputerName localhost -Port 8020 -WarningAction SilentlyContinue
+# 4. Check port 8021 (Backend)
+Write-Host "[4/5] Backend (port 8021)..." -ForegroundColor Yellow -NoNewline
+$backend = Test-NetConnection -ComputerName localhost -Port 8021 -WarningAction SilentlyContinue
 if ($backend.TcpTestSucceeded) {
     Write-Host " OK" -ForegroundColor Green
 } else {
     Write-Host " NOT REACHABLE!" -ForegroundColor Red
-    Write-Host "  -> Run: cd d:\QR && python -m uvicorn app.main:app --host 0.0.0.0 --port 8020 --reload" -ForegroundColor Yellow
+    Write-Host "  -> Run: cd d:\QR && python -m uvicorn app.main:app --host 0.0.0.0 --port 8021 --reload" -ForegroundColor Yellow
 }
 
 # 5. Check port 5173 (Frontend)

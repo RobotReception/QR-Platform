@@ -1,7 +1,8 @@
 import http, { STORAGE } from '@services/http/client'
 import type {
-  AuthResponse, LoginRequest, SignupRequest, AuthUser,
+  AuthResponse, LoginRequest, SignupRequest,
   SendOtpRequest, VerifyOtpRequest, ConfirmNewPasswordRequest, OtpResponse,
+  MeResponse,
 } from '../types'
 
 export const authAPI = {
@@ -30,8 +31,8 @@ export const authAPI = {
   },
 
   // GET /auth/me
-  me: async (): Promise<AuthUser & { tenants: AuthResponse['tenants'] }> => {
-    const { data } = await http.get('/auth/me')
+  me: async (): Promise<MeResponse> => {
+    const { data } = await http.get<MeResponse>('/auth/me')
     return data
   },
 

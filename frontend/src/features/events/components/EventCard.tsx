@@ -36,13 +36,20 @@ export function EventCard({ event, checkedIn = 0 }: Props) {
       {/* ── Banner ── */}
       <div
         className="event-card__banner"
-        style={{ borderBottom: `3px solid ${accent}` }}
+        style={{
+          borderBottom: `3px solid ${accent}`,
+          backgroundImage: event.cover_image_url ? `url(${event.cover_image_url})` : undefined,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+        }}
       >
-        {/* Decorative glow blob */}
-        <div
-          className="event-card__glow"
-          style={{ background: `radial-gradient(circle at 70% 50%, ${accent}33 0%, transparent 70%)` }}
-        />
+        {/* Decorative glow blob - only show if no cover image to prevent overlap */}
+        {!event.cover_image_url && (
+          <div
+            className="event-card__glow"
+            style={{ background: `radial-gradient(circle at 70% 50%, ${accent}33 0%, transparent 70%)` }}
+          />
+        )}
         {/* Status badge */}
         <span className={`event-card__status status-badge--${css}`}>{label}</span>
       </div>

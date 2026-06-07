@@ -17,6 +17,7 @@ from app.models.invitation import (
 from app.services.permission_service import require_permission
 from app.services.audit_service import log_audit
 from app.services import barcode_service, storage_service
+from app.services.quota_service import check_quota as _quota_check_single, check_quota_mixed
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -100,8 +101,23 @@ async def create_invitation(
     tenant_id = get_tenant_id_from_header(request)
     await require_permission(db, tenant_id, user.id, "invitations.create")
 
+    # Check RSVP feature flag
+    if body.require_rsvp:
+        from app.services.feature_service import require_feature
+        await require_feature(db, tenant_id, "rsvp")
+
+    # ── Plan limits ──
+    from app.services.feature_service import enforce_monthly_limit, enforce_static_limit
+    inv_count = body.guest_count or 1
+    await enforce_monthly_limit(db, tenant_id, "invitations_per_month", "الدعوات الشهرية", count=inv_count)
+    _inv_total_res = await db.execute(
+        text("SELECT COUNT(*) FROM invitations WHERE event_id = :eid AND tenant_id = :tid AND status NOT IN ('revoked','expired')"),
+        {"eid": str(body.event_id), "tid": str(tenant_id)},
+    )
+    await enforce_static_limit(db, tenant_id, "invitations_per_event", _inv_total_res.scalar() or 0, "الدعوات لكل حدث", requested=inv_count)
+
     # Check quota
-    await _check_quota(db, str(tenant_id), str(body.event_id), body.ticket_class)
+    await _quota_check_single(db, str(tenant_id), str(body.event_id), body.ticket_class, count=body.guest_count or 1)
 
     status_val = "created"
     rsvp_status_val = "pending"
@@ -187,32 +203,17 @@ async def create_quick_invites(
         if not event_result.first():
             raise HTTPException(404, "الحدث غير موجود")
 
-        # Single quota check for the entire batch
-        quota_result = await db.execute(
-            text("""
-                SELECT
-                    CASE WHEN CAST(:tc AS ticket_class) = 'vip'::ticket_class
-                         THEN e.vip_quota ELSE e.normal_quota END AS quota,
-                    COUNT(i.id) FILTER (
-                        WHERE i.ticket_class = CAST(:tc AS ticket_class)
-                          AND i.status NOT IN ('revoked','expired')
-                    ) AS used
-                FROM events e
-                LEFT JOIN invitations i ON i.event_id = e.id
-                WHERE e.id = :eid AND e.tenant_id = :tid
-                GROUP BY e.id
-            """),
-            {"eid": str(body.event_id), "tid": str(tenant_id), "tc": body.ticket_class},
+        # Centralized quota check
+        await _quota_check_single(db, str(tenant_id), str(body.event_id), body.ticket_class, count=total)
+
+        # ── Plan limits ──
+        from app.services.feature_service import enforce_monthly_limit, enforce_static_limit
+        await enforce_monthly_limit(db, tenant_id, "invitations_per_month", "الدعوات الشهرية", count=total)
+        _inv_total_res = await db.execute(
+            text("SELECT COUNT(*) FROM invitations WHERE event_id = :eid AND tenant_id = :tid AND status NOT IN ('revoked','expired')"),
+            {"eid": str(body.event_id), "tid": str(tenant_id)},
         )
-        quota_row = quota_result.mappings().first()
-        if not quota_row:
-            raise HTTPException(404, "الحدث غير موجود")
-        if quota_row["quota"] > 0 and (quota_row["used"] + total) > quota_row["quota"]:
-            raise HTTPException(
-                400,
-                f"تم الوصول للحد الأقصى لدعوات {body.ticket_class} "
-                f"({quota_row['quota']}). المستخدم: {quota_row['used']}, المطلوب: {total}"
-            )
+        await enforce_static_limit(db, tenant_id, "invitations_per_event", _inv_total_res.scalar() or 0, "الدعوات لكل حدث", requested=total)
 
         status_val = "created"
         rsvp_status_val = "pending"
@@ -300,15 +301,46 @@ async def create_bulk_from_guests(
     tenant_id = get_tenant_id_from_header(request)
     await require_permission(db, tenant_id, user.id, "invitations.create")
 
+    if body.require_rsvp:
+        # Check all guests first
+        guest_checks = await db.execute(
+            text("SELECT id, full_name, phone, email FROM guests WHERE id = ANY(:ids::uuid[]) AND tenant_id = :tid"),
+            {"ids": [str(gid) for gid in body.guest_ids], "tid": str(tenant_id)}
+        )
+        invalid_guests = []
+        for r in guest_checks.mappings().all():
+            phone = (r.get("phone") or "").strip()
+            email = (r.get("email") or "").strip()
+            if not phone and not email:
+                invalid_guests.append(r["full_name"] or str(r["id"]))
+        if invalid_guests:
+            names_str = "، ".join(invalid_guests)
+            raise HTTPException(
+                status_code=400,
+                detail=f"الضيوف التاليين يفتقرون إلى بيانات الاتصال (رقم الهاتف أو البريد الإلكتروني) اللازمة لتأكيد الحضور: {names_str}"
+            )
+
     status_val = "created"
     rsvp_status_val = "pending"
     if not body.require_rsvp:
         status_val = "accepted"
         rsvp_status_val = "accepted"
 
+    # Single batch quota check instead of per-guest
+    await _quota_check_single(db, str(tenant_id), str(body.event_id), body.ticket_class, count=len(body.guest_ids))
+
+    # ── Plan limits ──
+    from app.services.feature_service import enforce_monthly_limit, enforce_static_limit
+    _bulk_count = len(body.guest_ids)
+    await enforce_monthly_limit(db, tenant_id, "invitations_per_month", "الدعوات الشهرية", count=_bulk_count)
+    _inv_total_res = await db.execute(
+        text("SELECT COUNT(*) FROM invitations WHERE event_id = :eid AND tenant_id = :tid AND status NOT IN ('revoked','expired')"),
+        {"eid": str(body.event_id), "tid": str(tenant_id)},
+    )
+    await enforce_static_limit(db, tenant_id, "invitations_per_event", _inv_total_res.scalar() or 0, "الدعوات لكل حدث", requested=_bulk_count)
+
     created = 0
     for gid in body.guest_ids:
-        await _check_quota(db, str(tenant_id), str(body.event_id), body.ticket_class)
 
         # Get guest info
         g = await db.execute(
@@ -365,11 +397,25 @@ async def update_invitation(
     db: AsyncSession = Depends(get_db),
 ):
     tenant_id = get_tenant_id_from_header(request)
-    await require_permission(db, tenant_id, user.id, "invitations.create")
-
     updates = body.model_dump(exclude_unset=True)
     if not updates:
         raise HTTPException(400, "لا توجد حقول للتعديل")
+
+    invite_check = await db.execute(
+        text("SELECT is_registration FROM invitations WHERE id = :id AND tenant_id = :tid"),
+        {"id": str(invitation_id), "tid": str(tenant_id)},
+    )
+    invite_row = invite_check.mappings().first()
+    if not invite_row:
+        raise HTTPException(404, "الدعوة غير موجودة")
+
+    workflow_fields = {"rsvp_status", "status", "rsvp_message", "plus_one_count", "guest_count", "rsvp_at"}
+    if invite_row.get("is_registration") and workflow_fields & set(updates.keys()):
+        await require_permission(db, tenant_id, user.id, "events.edit")
+    elif set(updates.keys()) <= workflow_fields:
+        await require_permission(db, tenant_id, user.id, "invitations.view")
+    else:
+        await require_permission(db, tenant_id, user.id, "invitations.create")
 
     if "gate_id" in updates and updates["gate_id"]:
         updates["gate_id"] = str(updates["gate_id"])
@@ -495,6 +541,22 @@ async def send_invitations(
     tenant_id = get_tenant_id_from_header(request)
     await require_permission(db, tenant_id, user.id, "invitations.send")
 
+    # Check delivery channel feature flags
+    from app.services.feature_service import require_feature
+    if body.channel == "whatsapp":
+        await require_feature(db, tenant_id, "whatsapp_delivery")
+    elif body.channel == "email":
+        await require_feature(db, tenant_id, "email_delivery")
+    elif body.channel == "sms":
+        await require_feature(db, tenant_id, "sms_delivery")
+
+    if body.channel in ("email", "whatsapp", "sms") and body.invitation_ids:
+        from app.services.feature_service import enforce_monthly_limit
+        await enforce_monthly_limit(
+            db, tenant_id, "messages_per_month", "الرسائل الشهرية",
+            count=len(body.invitation_ids),
+        )
+
     sent = 0
     for inv_id in body.invitation_ids:
         # Get invitation
@@ -593,7 +655,7 @@ async def rsvp_invitation(
     Narrow query: only fetches the 4 fields needed for validation."""
     result = await db.execute(
         text("""
-            SELECT i.id, i.status, e.allow_rsvp, e.allow_plus_one
+            SELECT i.id, i.status, i.metadata, e.allow_rsvp, e.allow_plus_one
             FROM invitations i JOIN events e ON e.id = i.event_id
             WHERE i.token = :token
         """),
@@ -604,7 +666,11 @@ async def rsvp_invitation(
         raise HTTPException(404, "الدعوة غير موجودة")
     if row["status"] in ("revoked", "expired"):
         raise HTTPException(410, "الدعوة ملغاة أو منتهية")
-    if not row["allow_rsvp"]:
+
+    meta = row["metadata"] or {}
+    require_rsvp = meta.get("require_rsvp") is True or str(meta.get("require_rsvp")).lower() == "true"
+
+    if not row["allow_rsvp"] and not require_rsvp:
         raise HTTPException(400, "RSVP غير مفعّل لهذا الحدث")
 
     plus_one = body.plus_one_count if row["allow_plus_one"] else 0
@@ -629,27 +695,12 @@ async def rsvp_invitation(
 # ══════════════════════════════════════════════
 
 async def _check_quota(db: AsyncSession, tenant_id: str, event_id: str, ticket_class: str):
-    """Check if event has room for more invitations of this class."""
-    result = await db.execute(
-        text("""
-            SELECT
-                CASE WHEN CAST(:tc AS ticket_class) = 'vip'::ticket_class THEN e.vip_quota ELSE e.normal_quota END AS quota,
-                COUNT(i.id) FILTER (
-                    WHERE i.ticket_class = CAST(:tc AS ticket_class)
-                      AND i.status NOT IN ('revoked','expired')
-                ) AS used
-            FROM events e
-            LEFT JOIN invitations i ON i.event_id = e.id
-            WHERE e.id = :eid AND e.tenant_id = :tid
-            GROUP BY e.id
-        """),
-        {"eid": event_id, "tid": tenant_id, "tc": ticket_class},
-    )
-    row = result.mappings().first()
-    if not row:
-        raise HTTPException(404, "الحدث غير موجود")
-    if row["quota"] > 0 and row["used"] >= row["quota"]:
-        raise HTTPException(400, f"تم الوصول للحد الأقصى لدعوات {ticket_class} ({row['quota']})")
+    """Check if event has room for more invitations of this class.
+    
+    NOTE: Kept as a thin wrapper for backward compatibility
+    (imported by registration_forms.py). Delegates to quota_service.
+    """
+    await _quota_check_single(db, tenant_id, event_id, ticket_class, count=1)
 
 
 async def _generate_barcode_for_row(db: AsyncSession, tenant_id, event_id, inv: dict):

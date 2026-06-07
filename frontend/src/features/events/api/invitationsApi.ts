@@ -99,6 +99,8 @@ export interface DeleteGenerationResponse {
   success: boolean;
   deleted_invitations: number;
   deleted_files: number;
+  skipped_checked_in?: number;
+  message?: string;
 }
 
 /* ── API Client ── */

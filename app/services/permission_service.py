@@ -2,11 +2,27 @@
 Permission checking service.
 Central place to verify if a user has a specific permission in a tenant.
 Supports both simple role-based checks and granular RBAC permission checks.
+Resolves ui.* keys to legacy API keys automatically.
 """
 from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException, status
+
+from app.services.permission_aliases import resolve_permission_keys
+
+
+async def _direct_has_permission(
+    db: AsyncSession,
+    tenant_id: UUID,
+    user_id: UUID,
+    permission_key: str,
+) -> bool:
+    result = await db.execute(
+        text("SELECT public.user_has_permission(:tid, :uid, :pkey)"),
+        {"tid": str(tenant_id), "uid": str(user_id), "pkey": permission_key},
+    )
+    return result.scalar() or False
 
 
 async def has_permission(
@@ -18,12 +34,12 @@ async def has_permission(
     """
     Check if a user has a specific permission in a tenant.
     Owner and Admin roles automatically have all permissions.
+    ui.* keys are resolved to their legacy equivalents and vice versa.
     """
-    result = await db.execute(
-        text("SELECT public.user_has_permission(:tid, :uid, :pkey)"),
-        {"tid": str(tenant_id), "uid": str(user_id), "pkey": permission_key},
-    )
-    return result.scalar() or False
+    for key in resolve_permission_keys(permission_key):
+        if await _direct_has_permission(db, tenant_id, user_id, key):
+            return True
+    return False
 
 
 async def require_permission(
@@ -39,6 +55,22 @@ async def require_permission(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"ليس لديك صلاحية: {permission_key}",
         )
+
+
+async def require_any_permission(
+    db: AsyncSession,
+    tenant_id: UUID,
+    user_id: UUID,
+    *permission_keys: str,
+) -> None:
+    """Raise 403 unless the user has at least one of the given permissions."""
+    for key in permission_keys:
+        if await has_permission(db, tenant_id, user_id, key):
+            return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=f"ليس لديك صلاحية: {permission_keys[0]}",
+    )
 
 
 async def get_user_permissions(

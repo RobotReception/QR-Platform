@@ -281,6 +281,10 @@ export default function PublicInvitationPage() {
   const inv = invitation
   const isVip = inv.ticket_class === 'vip'
 
+  const needsRsvp = !!(inv.allow_rsvp || inv.metadata?.require_rsvp)
+  const hasAccepted = inv.rsvp_status === 'accepted'
+  const hasDeclined = inv.rsvp_status === 'declined'
+
   const customFields = Object.entries(inv.metadata || {}).filter(([key, value]) => {
     const systemKeys = [
       'generation_deleted', 'generation_deleted_at', 'generation_deleted_by', 
@@ -300,7 +304,7 @@ export default function PublicInvitationPage() {
 
       <div className="pub-card">
         {/* Cover or Rendered Card */}
-        {inv.card_image_url || inv.render_image_url ? (
+        {(!needsRsvp || hasAccepted) && (inv.card_image_url || inv.render_image_url) ? (
           <div className="pub-card__cover">
             <img src={inv.card_image_url || inv.render_image_url!} alt="دعوة" />
             <button 
@@ -371,7 +375,7 @@ export default function PublicInvitationPage() {
         </div>
 
         {/* Seating and Custom info */}
-        {(inv.seat_number || inv.table_number || inv.hall || customFields.length > 0) && (
+        {(!needsRsvp || hasAccepted) && (inv.seat_number || inv.table_number || inv.hall || customFields.length > 0) && (
           <div className="pub-seating-container">
             <div className="pub-seating-title">
               <Info size={14} />
@@ -414,8 +418,16 @@ export default function PublicInvitationPage() {
           </div>
         )}
 
+        {/* RSVP Notice Box (if RSVP is required and pending) */}
+        {needsRsvp && !hasAccepted && !hasDeclined && (
+          <div className="pub-rsvp-notice">
+            <Info size={16} style={{ flexShrink: 0 }} />
+            <span>يرجى تأكيد حضورك أدناه لتوليد كرت الدخول والباركود الخاص بك.</span>
+          </div>
+        )}
+
         {/* QR Code */}
-        {(inv.barcode_png_url || inv.qr_data || inv.token) && (
+        {(!needsRsvp || hasAccepted) && (inv.barcode_png_url || inv.qr_data || inv.token) && (
           <div className="pub-qr">
             <img
               src={inv.barcode_png_url || `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(inv.qr_data || `${window.location.origin}/i/${inv.token}`)}`}
@@ -470,7 +482,7 @@ export default function PublicInvitationPage() {
         </div>
 
         {/* RSVP Form */}
-        {inv.allow_rsvp && !rsvpDone && inv.rsvp_status !== 'accepted' && inv.rsvp_status !== 'declined' && (
+        {(inv.allow_rsvp || inv.metadata?.require_rsvp) && !rsvpDone && inv.rsvp_status !== 'accepted' && inv.rsvp_status !== 'declined' && (
           <div className="pub-rsvp">
             <h3>هل ستحضر؟</h3>
             

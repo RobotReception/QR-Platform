@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional
 from uuid import UUID
 from datetime import datetime
@@ -62,6 +62,16 @@ class InvitationCreate(BaseModel):
     notes: Optional[str] = None
     metadata: Optional[dict] = None
     require_rsvp: Optional[bool] = False
+    is_registration: Optional[bool] = False
+
+    @model_validator(mode="after")
+    def validate_rsvp_contact(self) -> 'InvitationCreate':
+        if self.require_rsvp:
+            phone = (self.guest_phone or "").strip()
+            email = (self.guest_email or "").strip()
+            if not phone and not email:
+                raise ValueError("يجب توفير رقم الهاتف أو البريد الإلكتروني للضيف عند تفعيل تأكيد الحضور (RSVP)")
+        return self
 
 
 class QuickInviteCreate(BaseModel):
@@ -72,6 +82,12 @@ class QuickInviteCreate(BaseModel):
     names: Optional[list[str]] = None
     gate_id: Optional[UUID] = None
     require_rsvp: Optional[bool] = False
+
+    @model_validator(mode="after")
+    def validate_rsvp_not_allowed(self) -> 'QuickInviteCreate':
+        if self.require_rsvp:
+            raise ValueError("لا يمكن تفعيل تأكيد الحضور (RSVP) عند التوليد السريع بالعدد أو الأسماء فقط (لعدم وجود بيانات الاتصال)")
+        return self
 
 
 class BulkInviteFromGuests(BaseModel):
@@ -123,6 +139,7 @@ class InvitationRead(BaseModel):
     zip_url: Optional[str] = None
     notes: Optional[str] = None
     metadata: Optional[dict] = None
+    is_registration: bool = False
     expires_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
@@ -148,6 +165,7 @@ class InvitationUpdate(BaseModel):
     rsvp_at: Optional[datetime] = None
     guest_count: Optional[int] = None
     metadata: Optional[dict] = None
+    is_registration: Optional[bool] = None
 
 
 

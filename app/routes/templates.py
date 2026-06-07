@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
+from typing import Optional
 import json
 from PIL import Image
 
@@ -107,6 +108,16 @@ async def create_template(
 ):
     tenant_id = get_tenant_id_from_header(request)
     await require_permission(db, tenant_id, user.id, "templates.create")
+
+    # ── Plan limit: designed_templates ──
+    if body.template_type == "designed":
+        from app.services.feature_service import enforce_static_limit
+        tmpl_count_res = await db.execute(
+            text("SELECT COUNT(*) FROM invite_templates WHERE tenant_id = :tid AND template_type = 'designed'"),
+            {"tid": str(tenant_id)},
+        )
+        current_templates = tmpl_count_res.scalar() or 0
+        await enforce_static_limit(db, tenant_id, "designed_templates", current_templates, "القوالب المصممة")
 
     result = await db.execute(
         text("""
@@ -611,6 +622,9 @@ async def upload_background(
     if len(content) > 10 * 1024 * 1024:  # 10MB limit
         raise HTTPException(400, "حجم الملف يتجاوز 10MB")
 
+    from app.services.feature_service import require_storage_for_upload
+    await require_storage_for_upload(db, tenant_id, len(content))
+
     content, stored_mime, width_px, height_px = _read_background_upload(file, content)
     ext = "png" if stored_mime == "image/png" else (file.filename.rsplit(".", 1)[-1] if file.filename and "." in file.filename else "png")
 
@@ -786,10 +800,15 @@ async def delete_asset(
 class PreviewRequest(BaseModel):
     """معاينة القالب مع بيانات اختبار"""
     guest_name: str = "أحمد علي"
+    guest_phone: str = ""
+    guest_email: str = ""
+    guest_company: str = ""
+    guest_title: str = ""
     event_title: str = "حفل تخرج"
     event_date: str = "2025-06-15"
     event_time: str = "19:00"
     event_location: str = "فندق الريتز"
+    event_address: str = "طريق الملك فهد، حي العليا"
     seat_number: str = "A12"
     table_number: str = "5"
     custom_data: dict = {}
@@ -843,12 +862,17 @@ async def preview_template(
         "guest": {
             "name": body.guest_name,
             "name_ar": body.guest_name,
+            "phone": body.guest_phone,
+            "email": body.guest_email,
+            "company": body.guest_company,
+            "title": body.guest_title,
         },
         "event": {
             "title": body.event_title,
             "date": body.event_date,
             "time": body.event_time,
             "location": body.event_location,
+            "venue_address": body.event_address,
         },
         "invite": {
             "code": "PREVIEW123",
@@ -884,6 +908,169 @@ async def preview_template(
         )
     except Exception as e:
         raise HTTPException(500, f"خطأ في رسم المعاينة: {str(e)}")
+
+
+class AITemplateGenerateRequest(BaseModel):
+    prompt: str
+    ticket_class: str = "normal"
+    orientation: str = "portrait"
+    event_id: Optional[UUID] = None
+
+
+@router.post("/generate-ai", response_model=TemplateRead, status_code=201)
+async def generate_template_ai(
+    body: AITemplateGenerateRequest,
+    request: Request,
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Generate an invitation template using AI.
+    Only available on Pro, Business, and Enterprise plans.
+    Consumes 1 AI request from the tenant's monthly limits.
+    """
+    tenant_id = get_tenant_id_from_header(request)
+    await require_permission(db, tenant_id, user.id, "templates.create")
+
+    # 1. Enforce AI feature flag (available on Pro, Business, Enterprise)
+    from app.services.feature_service import require_feature, enforce_monthly_limit
+    await require_feature(db, tenant_id, "ai_features")
+
+    # 2. Enforce monthly limit
+    await enforce_monthly_limit(db, tenant_id, "ai_requests_per_month", "طلبات الذكاء الاصطناعي")
+
+    # 3. Create a designed template inside DB based on the prompt
+    w = 1240 if body.orientation == "portrait" else 1754
+    h = 1754 if body.orientation == "portrait" else 1240
+
+    bg_color = "#ffffff"
+    prompt_lower = body.prompt.lower()
+    if any(word in prompt_lower for word in ("dark", "مظلم", "أسود", "black", "داكن")):
+        bg_color = "#1e293b"
+    elif any(word in prompt_lower for word in ("gold", "ذهبي", "أصفر", "yellow")):
+        bg_color = "#fef08a"
+    elif any(word in prompt_lower for word in ("blue", "أزرق", "سماوي")):
+        bg_color = "#eff6ff"
+
+    result = await db.execute(
+        text("""
+            INSERT INTO invite_templates (
+                tenant_id, event_id, name, template_type, ticket_class,
+                width_px, height_px, orientation,
+                background_url, background_color, quick_style,
+                is_default, metadata, created_by
+            ) VALUES (
+                :tid, :eid, :name, 'designed', CAST(:tc AS ticket_class),
+                :w, :h, :orient,
+                null, :bg_color, '{}'::jsonb,
+                false, CAST(:meta AS jsonb), :uid
+            )
+            RETURNING *
+        """),
+        {
+            "tid": str(tenant_id),
+            "eid": str(body.event_id) if body.event_id else None,
+            "name": f"قالب ذكي: {body.prompt[:30]}",
+            "tc": body.ticket_class,
+            "w": w,
+            "h": h,
+            "orient": body.orientation,
+            "bg_color": bg_color,
+            "meta": json.dumps({"ai_generated": True, "prompt": body.prompt}),
+            "uid": str(user.id),
+        },
+    )
+    row = result.mappings().first()
+    template_id = row["id"]
+
+    # 4. Generate default template elements arranged professionally
+    elements = [
+        # guest_name
+        {
+            "element_type": "guest_name",
+            "label": "الاسم الكامل للضيف",
+            "x": 0.5, "y": 0.45, "width": 0.8, "height": 0.06,
+            "font_family": "Cairo", "font_size": 36.0, "font_weight": "bold",
+            "font_color": "#C9A96E" if bg_color == "#1e293b" else "#0f172a",
+            "text_align": "center", "z_index": 1, "sort_order": 1,
+        },
+        # event_title
+        {
+            "element_type": "event_title",
+            "label": "اسم الفعالية",
+            "x": 0.5, "y": 0.25, "width": 0.9, "height": 0.08,
+            "font_family": "Cairo", "font_size": 48.0, "font_weight": "bold",
+            "font_color": "#ffffff" if bg_color == "#1e293b" else "#1e293b",
+            "text_align": "center", "z_index": 2, "sort_order": 2,
+        },
+        # qr_code
+        {
+            "element_type": "qr_code",
+            "label": "رمز الاستجابة السريعة (QR)",
+            "x": 0.5, "y": 0.75, "width": 0.25, "height": 0.18,
+            "qr_size": 0.18, "maintain_square": True,
+            "z_index": 3, "sort_order": 3,
+        },
+        # event_date
+        {
+            "element_type": "event_date",
+            "label": "تاريخ الحدث",
+            "x": 0.35, "y": 0.9, "width": 0.3, "height": 0.04,
+            "font_family": "Cairo", "font_size": 22.0, "font_weight": "normal",
+            "font_color": "#94a3b8" if bg_color == "#1e293b" else "#475569",
+            "text_align": "right", "z_index": 4, "sort_order": 4,
+        },
+        # event_location
+        {
+            "element_type": "event_location",
+            "label": "موقع الحدث",
+            "x": 0.65, "y": 0.9, "width": 0.3, "height": 0.04,
+            "font_family": "Cairo", "font_size": 22.0, "font_weight": "normal",
+            "font_color": "#94a3b8" if bg_color == "#1e293b" else "#475569",
+            "text_align": "left", "z_index": 5, "sort_order": 5,
+        }
+    ]
+
+    for el in elements:
+        await db.execute(
+            text("""
+                INSERT INTO template_elements (
+                    template_id, element_type, label, x, y, width, height,
+                    font_family, font_size, font_weight, font_color, text_align,
+                    qr_size, z_index, sort_order, is_visible
+                ) VALUES (
+                    :tid, :etype, :label, :x, :y, :w, :h,
+                    :font_family, :font_size, :font_weight, :font_color, :text_align,
+                    :qr_size, :z_index, :sort_order, true
+                )
+            """),
+            {
+                "tid": str(template_id),
+                "etype": el["element_type"],
+                "label": el["label"],
+                "x": el["x"], "y": el["y"], "w": el["width"], "h": el["height"],
+                "font_family": el.get("font_family", "Cairo"),
+                "font_size": el.get("font_size", 24.0),
+                "font_weight": el.get("font_weight", "normal"),
+                "font_color": el.get("font_color", "#000000"),
+                "text_align": el.get("text_align", "center"),
+                "qr_size": el.get("qr_size", 0.15),
+                "z_index": el["z_index"],
+                "sort_order": el["sort_order"],
+            }
+        )
+
+    await log_audit(db, tenant_id=tenant_id, actor_user_id=user.id,
+                    action="template.generate_ai", resource_type="template", resource_id=str(template_id),
+                    ip_address=request.client.host if request.client else None)
+    await db.commit()
+
+    # Re-fetch full record to make sure it includes autogenerated fields
+    refetched = await db.execute(
+        text("SELECT * FROM invite_templates WHERE id = :id"),
+        {"id": str(template_id)}
+    )
+    return TemplateRead(**dict(refetched.mappings().first()))
 
 
 

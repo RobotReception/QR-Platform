@@ -1,4 +1,5 @@
 import { useDeferredValue, useMemo, useState } from 'react'
+import { Navigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -20,6 +21,7 @@ import {
   User,
 } from 'lucide-react'
 import { WorkspaceShell } from '@features/workspace/components/WorkspaceShell'
+import { Can, PERM, usePermission } from '@shared/permissions'
 import { usersAPI } from '../api/usersApi'
 import { useAuthStore } from '@features/auth/store/authStore'
 import type { UserMember, UpdateMemberRequest } from '../types'
@@ -380,9 +382,17 @@ function ConfirmDeleteDialog({
 // ═══════════════════════════════════════════════════════
 export default function UsersPage() {
   const currentTenantId = useAuthStore(s => s.currentTenantId)
+
+  // Guard
+  const hasAccess = usePermission(PERM.NAV_USERS)
+  if (!hasAccess) {
+    return <Navigate to="/dashboard" replace />
+  }
   const currentUserId = useAuthStore(s => s.user?.id)
   const currentTenant = useAuthStore(s => s.tenants.find(t => t.tenant_id === currentTenantId))
   const queryClient = useQueryClient()
+  const canEditMembers = usePermission(PERM.MEMBER_EDIT)
+  const canDeleteMembers = usePermission(PERM.MEMBER_DELETE)
 
   // ── State ──
   const [search, setSearch] = useState('')
@@ -493,13 +503,10 @@ export default function UsersPage() {
     }
   }
 
-  const canDelete = (member: UserMember) => {
-    return member.role !== 'owner' && member.user_id !== currentUserId
-  }
+  const canEdit = (member: UserMember) => canEditMembers && member.role !== 'owner'
 
-  const canEdit = (member: UserMember) => {
-    return member.role !== 'owner'
-  }
+  const canDelete = (member: UserMember) =>
+    canDeleteMembers && member.role !== 'owner' && member.user_id !== currentUserId
 
   // ═══════════════════════════════════════════════════════
   // RENDER
@@ -510,12 +517,14 @@ export default function UsersPage() {
       subtitle={`${currentTenant?.name || 'مساحة العمل'} · إدارة أعضاء المؤسسة والصلاحيات الأساسية`}
       actions={
         <div className="header-actions">
-          <button
-            className="btn btn-primary"
-            onClick={() => setShowAddDialog(true)}
-          >
-            <Plus size={16} /> إضافة عضو
-          </button>
+          <Can permission={PERM.MEMBER_CREATE}>
+            <button
+              className="btn btn-primary"
+              onClick={() => setShowAddDialog(true)}
+            >
+              <Plus size={16} /> إضافة عضو
+            </button>
+          </Can>
           <button className="dash-icon-btn" onClick={() => refetch()} aria-label="تحديث">
             <RefreshCcw size={18} />
           </button>

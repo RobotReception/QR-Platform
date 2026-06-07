@@ -25,6 +25,12 @@ export interface AuthUser {
   is_staff:  boolean
 }
 
+export interface MeResponse extends AuthUser {
+  user_id?:    string
+  tenants?:    TenantInfo[]
+  permissions?: string[]
+}
+
 export interface AuthState {
   user:    AuthUser | null
   tenants: TenantInfo[]

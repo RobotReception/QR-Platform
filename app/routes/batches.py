@@ -19,6 +19,7 @@ from app.models.batch import BatchCreate, BatchRead, BatchItemRead, BatchSummary
 from app.services.permission_service import require_permission
 from app.services.audit_service import log_audit
 from app.services import batch_pipeline, storage_service
+from app.services.quota_service import check_quota as quota_check_single
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -416,7 +417,10 @@ async def download_pdf(
 ):
     """Get a fresh signed URL for the batch PDF."""
     tenant_id = get_tenant_id_from_header(request)
-    await require_permission(db, tenant_id, user.id, "batches.view")
+    await require_permission(db, tenant_id, user.id, "invitations.export")
+
+    from app.services.feature_service import require_feature
+    await require_feature(db, tenant_id, "pdf_export")
 
     result = await db.execute(
         text("SELECT result_pdf_url, status, event_id FROM generation_batches WHERE id = :id AND tenant_id = :tid"),
@@ -445,7 +449,10 @@ async def download_zip(
 ):
     """Get a fresh signed URL for the batch ZIP."""
     tenant_id = get_tenant_id_from_header(request)
-    await require_permission(db, tenant_id, user.id, "batches.view")
+    await require_permission(db, tenant_id, user.id, "invitations.export")
+
+    from app.services.feature_service import require_feature
+    await require_feature(db, tenant_id, "pdf_export")
 
     result = await db.execute(
         text("SELECT result_zip_url, status, event_id FROM generation_batches WHERE id = :id AND tenant_id = :tid"),
@@ -593,31 +600,19 @@ async def generate_designed_fast(
 
     # Check quota
     total_invitations = len(body.invitations)
-    quota_result = await db.execute(
-        text("""
-            SELECT
-                CASE WHEN CAST(:tc AS ticket_class) = 'vip'::ticket_class
-                     THEN e.vip_quota ELSE e.normal_quota END AS quota,
-                COUNT(i.id) FILTER (
-                    WHERE i.ticket_class = CAST(:tc AS ticket_class)
-                      AND i.status NOT IN ('revoked','expired')
-                ) AS used
-            FROM events e
-            LEFT JOIN invitations i ON i.event_id = e.id
-            WHERE e.id = :eid AND e.tenant_id = :tid
-            GROUP BY e.id
-        """),
-        {"eid": str(body.event_id), "tid": str(tenant_id), "tc": body.ticket_class},
+    await quota_check_single(
+        db, str(tenant_id), str(body.event_id),
+        body.ticket_class, count=total_invitations
     )
-    quota_row = quota_result.mappings().first()
-    if not quota_row:
-        raise HTTPException(404, "الحدث غير موجود")
-    if quota_row["quota"] > 0 and (quota_row["used"] + total_invitations) > quota_row["quota"]:
-        raise HTTPException(
-            400,
-            f"تم الوصول للحد الأقصى لدعوات {body.ticket_class} "
-            f"({quota_row['quota']}). المستخدم: {quota_row['used']}, المطلوب: {total_invitations}"
-        )
+
+    # ── Plan limits ──
+    from app.services.feature_service import enforce_monthly_limit, enforce_static_limit
+    await enforce_monthly_limit(db, tenant_id, "invitations_per_month", "الدعوات الشهرية", count=total_invitations)
+    _inv_total_res = await db.execute(
+        text("SELECT COUNT(*) FROM invitations WHERE event_id = :eid AND tenant_id = :tid AND status NOT IN ('revoked','expired')"),
+        {"eid": str(body.event_id), "tid": str(tenant_id)},
+    )
+    await enforce_static_limit(db, tenant_id, "invitations_per_event", _inv_total_res.scalar() or 0, "الدعوات لكل حدث", requested=total_invitations)
 
     # Batch insert invitations
     values_parts = []
@@ -637,6 +632,41 @@ async def generate_designed_fast(
         
         # Determine status and rsvp_status based on require_rsvp
         require_rsvp = meta.get("require_rsvp", False)
+        
+        if require_rsvp:
+            from app.services.feature_service import require_feature
+            await require_feature(db, tenant_id, "rsvp")
+
+            has_phone = False
+            has_email = False
+            
+            phone_keys = {"guest_phone", "phone", "mobile", "tel", "رقم_الهاتف", "الهاتف", "رقم_الجوال", "الجوال", "موبايل", "الموبايل", "تليفون", "الهاتف_المحمول", "رقم الهاتف", "الهاتف المحمول", "رقم الجوال"}
+            email_keys = {"guest_email", "email", "البريد", "البريد_الإلكتروني", "البريد_الالكتروني", "البريد الإلكتروني", "البريد الالكتروني", "الايميل", "ايميل", "بريد", "بريد_الكتروني", "بريد الكتروني"}
+            
+            def check_dict(d: dict):
+                nonlocal has_phone, has_email
+                if not isinstance(d, dict):
+                    return
+                for k, v in d.items():
+                    k_str = str(k).strip().lower().replace(" ", "_").replace("-", "_")
+                    if k_str in phone_keys or k in phone_keys:
+                        if str(v or "").strip():
+                            has_phone = True
+                    if k_str in email_keys or k in email_keys:
+                        if str(v or "").strip():
+                            has_email = True
+            
+            check_dict(inv_data)
+            check_dict(meta)
+            check_dict(meta.get("custom_fields"))
+            
+            if not has_phone and not has_email:
+                guest_name = inv_data.get("guest_name") or f"ضيف {idx + 1}"
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"السطر {idx + 1} (الضيف: {guest_name}): يجب توفير رقم الهاتف أو البريد الإلكتروني لتفعيل تأكيد الحضور (RSVP)"
+                )
+        
         meta["require_rsvp"] = require_rsvp
         
         status_val = "created"

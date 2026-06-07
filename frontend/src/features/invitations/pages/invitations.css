@@ -595,3 +595,20 @@
   .inv-detail-panel { width: 100%; }
   .inv-channel-grid { grid-template-columns: 1fr; }
 }
+
+.pub-rsvp-notice {
+  margin: 0 24px 16px;
+  padding: 14px 18px;
+  background: rgba(201, 169, 110, 0.08);
+  border: 1px dashed rgba(201, 169, 110, 0.25);
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #C9A96E;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  text-align: right;
+  direction: rtl;
+}
+
