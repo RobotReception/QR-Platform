@@ -3,6 +3,16 @@
 !.env.example
 node_modules/
 *.log
+
+# Secrets / auth artifacts (never commit tokens)
+auth-data.json
+*.token
+*.pem
+
+# Python
+.pytest_cache/
+.coverage
+htmlcov/
 supabase.exe
 supabase.tar*
 .claude/
@@ -15,3 +25,6 @@ dist/
 build/
 .idea/
 .vscode/
+
+# Build artifacts
+*.tsbuildinfo
