@@ -1,177 +1,139 @@
-# Supabase CLI
+# QR-Platform (Qentry)
 
-[![Coverage Status](https://coveralls.io/repos/github/supabase/cli/badge.svg?branch=develop)](https://coveralls.io/github/supabase/cli?branch=develop) [![Bitbucket Pipelines](https://img.shields.io/bitbucket/pipelines/supabase-cli/setup-cli/master?style=flat-square&label=Bitbucket%20Canary)](https://bitbucket.org/supabase-cli/setup-cli/pipelines) [![Gitlab Pipeline Status](https://img.shields.io/gitlab/pipeline-status/sweatybridge%2Fsetup-cli?label=Gitlab%20Canary)
-](https://gitlab.com/sweatybridge/setup-cli/-/pipelines)
+> Multi-tenant digital invitation & event check-in platform — منصة الدعوات الرقمية وتسجيل الدخول للفعاليات
 
-[Supabase](https://supabase.io) is an open source Firebase alternative. We're building the features of Firebase using enterprise-grade open source tools.
+QR-Platform is a SaaS application for creating event invitations from templates,
+generating QR/barcode passes in bulk, and validating guests at the gate in
+real time. It supports multiple tenants, role-based access control, billing
+(Stripe & PayPal), and Arabic/RTL-aware rendering.
 
-This repository contains all the functionality for Supabase CLI.
+> **Note:** The repository also contains an Arabic status document at
+> [`README_AR.md`](./README_AR.md) and detailed guides under the various
+> `*.md` files (see [`DOCUMENTATION_INDEX.md`](./DOCUMENTATION_INDEX.md)).
 
-- [x] Running Supabase locally
-- [x] Managing database migrations
-- [x] Creating and deploying Supabase Functions
-- [x] Generating types directly from your database schema
-- [x] Making authenticated HTTP requests to [Management API](https://supabase.com/docs/reference/api/introduction)
+---
 
-## Getting started
+## Features
 
-### Install the CLI
+- **Multi-tenancy** — tenant isolation via the `X-Tenant-ID` header / subdomain / custom domain.
+- **Template-based invitations** — design templates with relative (0.0–1.0) element coordinates, RTL mirroring, and Arabic text shaping.
+- **Bulk generation** — offload PDF/ZIP batch generation to Celery workers (with a BackgroundTask fallback for dev).
+- **Check-in** — high-throughput gate scanning endpoint with HMAC-signed invitation tokens.
+- **Billing** — Stripe and PayPal subscriptions, plans, add-ons and usage quotas.
+- **Auth** — Supabase Auth (JWT), RBAC, and audit logging.
 
-Available via [NPM](https://www.npmjs.com) as dev dependency. To install:
+## Tech Stack
+
+| Layer    | Technology |
+|----------|------------|
+| Backend  | FastAPI, SQLAlchemy (asyncpg), Pydantic v2 |
+| Workers  | Celery + Redis |
+| Database | PostgreSQL (via Supabase or self-hosted) |
+| Auth/Storage | Supabase |
+| Frontend | React 18, TypeScript, Vite, TanStack Query, Zustand, Tailwind CSS |
+| Payments | Stripe, PayPal |
+| Rendering | Pillow, ReportLab, PyMuPDF, qrcode, python-barcode |
+
+## Project Structure
+
+```
+app/                  FastAPI backend
+  ├─ routes/          API routers (auth, events, templates, checkin, billing, ...)
+  ├─ services/        Business logic (render, batch pipeline, permissions, ...)
+  ├─ models/          SQLAlchemy models
+  ├─ main.py          App entrypoint & middleware wiring
+  ├─ auth.py          JWT verification
+  └─ middleware.py    Tenant resolution, security headers, rate limiting
+frontend/             React + Vite SPA (Qentry)
+  └─ src/features/     Feature-based modules (auth, dashboard, events, ...)
+landing/              Marketing landing page
+supabase/             SQL schema & manual migrations
+scripts/              Operational scripts
+tests/                Automated tests (pytest)
+docker-compose.yml    Local Postgres + Redis
+```
+
+## Getting Started
+
+### Prerequisites
+
+- Python 3.12+
+- Node.js 20+
+- Docker (for local Postgres + Redis)
+
+### 1. Backend
 
 ```bash
-npm i supabase --save-dev
+# Clone & enter
+git clone https://github.com/RobotReception/QR-Platform.git
+cd QR-Platform
+
+# Configure environment
+cp .env.example .env
+# → fill in Supabase, database, Stripe/PayPal, SMTP and INVITE_HMAC_SECRET values
+
+# Start Postgres + Redis
+docker compose up -d
+
+# Install Python deps
+python -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+
+# Run the API
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-When installing with yarn 4, you need to disable experimental fetch with the following nodejs config.
+- API docs: http://127.0.0.1:8000/docs
+- Health check: http://127.0.0.1:8000/health
 
-```
-NODE_OPTIONS=--no-experimental-fetch yarn add supabase
-```
-
-> **Note**
-For Bun versions below v1.0.17, you must add `supabase` as a [trusted dependency](https://bun.sh/guides/install/trusted) before running `bun add -D supabase`.
-
-<details>
-  <summary><b>macOS</b></summary>
-
-  Available via [Homebrew](https://brew.sh). To install:
-
-  ```sh
-  brew install supabase/tap/supabase
-  ```
-
-  To install the beta release channel:
-  
-  ```sh
-  brew install supabase/tap/supabase-beta
-  brew link --overwrite supabase-beta
-  ```
-  
-  To upgrade:
-
-  ```sh
-  brew upgrade supabase
-  ```
-</details>
-
-<details>
-  <summary><b>Windows</b></summary>
-
-  Available via [Scoop](https://scoop.sh). To install:
-
-  ```powershell
-  scoop bucket add supabase https://github.com/supabase/scoop-bucket.git
-  scoop install supabase
-  ```
-
-  To upgrade:
-
-  ```powershell
-  scoop update supabase
-  ```
-</details>
-
-<details>
-  <summary><b>Linux</b></summary>
-
-  Available via [Homebrew](https://brew.sh) and Linux packages.
-
-  #### via Homebrew
-
-  To install:
-
-  ```sh
-  brew install supabase/tap/supabase
-  ```
-
-  To upgrade:
-
-  ```sh
-  brew upgrade supabase
-  ```
-
-  #### via Linux packages
-
-  Linux packages are provided in [Releases](https://github.com/supabase/cli/releases). To install, download the `.apk`/`.deb`/`.rpm`/`.pkg.tar.zst` file depending on your package manager and run the respective commands.
-
-  ```sh
-  sudo apk add --allow-untrusted <...>.apk
-  ```
-
-  ```sh
-  sudo dpkg -i <...>.deb
-  ```
-
-  ```sh
-  sudo rpm -i <...>.rpm
-  ```
-
-  ```sh
-  sudo pacman -U <...>.pkg.tar.zst
-  ```
-</details>
-
-<details>
-  <summary><b>Other Platforms</b></summary>
-
-  You can also install the CLI via [go modules](https://go.dev/ref/mod#go-install) without the help of package managers.
-
-  ```sh
-  go install github.com/supabase/cli@latest
-  ```
-
-  Add a symlink to the binary in `$PATH` for easier access:
-
-  ```sh
-  ln -s "$(go env GOPATH)/bin/cli" /usr/bin/supabase
-  ```
-
-  This works on other non-standard Linux distros.
-</details>
-
-<details>
-  <summary><b>Community Maintained Packages</b></summary>
-
-  Available via [pkgx](https://pkgx.sh/). Package script [here](https://github.com/pkgxdev/pantry/blob/main/projects/supabase.com/cli/package.yml).
-  To install in your working directory:
-
-  ```bash
-  pkgx install supabase
-  ```
-
-  Available via [Nixpkgs](https://nixos.org/). Package script [here](https://github.com/NixOS/nixpkgs/blob/master/pkgs/development/tools/supabase-cli/default.nix).
-</details>
-
-### Run the CLI
+### 2. Celery worker (optional, for bulk generation)
 
 ```bash
-supabase bootstrap
+celery -A app.worker.celery_app worker --loglevel=info
 ```
 
-Or using npx:
+### 3. Frontend
 
 ```bash
-npx supabase bootstrap
+cd frontend
+npm install
+npm run dev
 ```
 
-The bootstrap command will guide you through the process of setting up a Supabase project using one of the [starter](https://github.com/supabase-community/supabase-samples/blob/main/samples.json) templates.
+The dev server runs on http://localhost:5173 and proxies `/api/v1` to the backend.
 
-## Docs
+## Environment Variables
 
-Command & config reference can be found [here](https://supabase.com/docs/reference/cli/about).
+See [`.env.example`](./.env.example) for the full list. Key groups:
 
-## Breaking changes
+- **Supabase:** `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET`
+- **Database:** `DATABASE_URL` (`postgresql+asyncpg://...`)
+- **Billing:** `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`
+- **Security:** `INVITE_HMAC_SECRET` (required in production — generate with `python -c "import secrets; print(secrets.token_hex(32))"`)
+- **Worker/Storage:** `REDIS_URL`, `USE_WORKER`, `STORAGE_BUCKET`
 
-We follow semantic versioning for changes that directly impact CLI commands, flags, and configurations.
+> **Never commit secrets.** `.env` and token files (e.g. `auth-data.json`) are gitignored.
 
-However, due to dependencies on other service images, we cannot guarantee that schema migrations, seed.sql, and generated types will always work for the same CLI major version. If you need such guarantees, we encourage you to pin a specific version of CLI in package.json.
+## Testing
 
-## Developing
+```bash
+# Backend
+pip install -r requirements-dev.txt
+pytest
 
-To run from source:
-
-```sh
-# Go >= 1.22
-go run . help
+# Frontend
+cd frontend
+npm run lint
+npm run build
 ```
+
+## API Documentation
+
+A comprehensive endpoint reference lives in [`API_DOCUMENTATION.md`](./API_DOCUMENTATION.md).
+All authenticated requests require both an `Authorization: Bearer <token>` header
+and an `X-Tenant-ID` header.
+
+## License
+
+See [`LICENSE`](./LICENSE).
