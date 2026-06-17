@@ -24,7 +24,9 @@ import secrets
 import random
 import string
 from datetime import datetime, timedelta, timezone
+import logging
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -203,7 +205,18 @@ async def signup(
         await db.rollback()
         import logging
         logging.getLogger(__name__).error(f"Failed to provision tenant for user {user_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Tenant provisioning failed: {str(e)}")
+        # Roll back the Supabase auth user too, so the email isn't left in a
+        # half-created state (would otherwise block re-signup AND login).
+        try:
+            admin = get_supabase_admin()
+            await asyncio.to_thread(admin.auth.admin.delete_user, user_id)
+            logging.getLogger(__name__).info("Rolled back orphaned auth user %s", user_id)
+        except Exception as cleanup_error:
+            logging.getLogger(__name__).error(
+                "Failed to roll back auth user %s (manual cleanup needed): %s",
+                user_id, cleanup_error,
+            )
+        raise HTTPException(status_code=500, detail="فشل تجهيز المؤسسة. حاول مرة أخرى.")
 
     # ── 7. Generate email verification link ──
     try:
@@ -256,22 +269,24 @@ async def login(
 
     user_id = str(result.user.id)
 
-    # Update last_login_at (skip if profiles table doesn't exist)
+    # Update last_login_at (best-effort)
     try:
         await db.execute(
             text("UPDATE profiles SET last_login_at = now() WHERE id = :uid"),
             {"uid": user_id},
         )
         await db.commit()
-    except Exception:
-        pass  # Skip if profiles table not set up yet
+    except Exception as e:
+        await db.rollback()
+        logger.warning("Could not update last_login_at for %s: %s", user_id, e)
 
-    # Get user's tenants (skip if not set up)
+    # Get user's tenants (best-effort)
     try:
         tenants = await get_user_tenants_with_roles(db, UUID(user_id))
         active_tenants = [t for t in tenants if t["tenant_status"] in ("active", "trial")]
-    except Exception:
-        active_tenants = []  # No tenants if schema not ready
+    except Exception as e:
+        logger.warning("Could not load tenants for %s: %s", user_id, e)
+        active_tenants = []
 
     if len(active_tenants) > 1 and not body.tenant_id:
         # Multiple tenants — require selection

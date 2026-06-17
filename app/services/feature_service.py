@@ -321,6 +321,68 @@ async def get_tenant_limits_summary(
     return summary
 
 
+# Persistent resources whose live count must fit within the target plan
+# BEFORE a downgrade is allowed. Monthly counters (events/invitations) reset
+# each period, so they are enforced at usage time, not here.
+_DOWNGRADE_RESOURCES = {
+    "seats_max": ("الأعضاء", "SELECT COUNT(*) FROM memberships WHERE tenant_id = :tid AND status = 'active'"),
+    "teams_max": ("الفرق", "SELECT COUNT(*) FROM teams WHERE tenant_id = :tid"),
+    "guests_max": ("الضيوف", "SELECT COUNT(*) FROM guests WHERE tenant_id = :tid"),
+}
+
+
+async def check_downgrade_allowed(
+    db: AsyncSession,
+    tenant_id: UUID,
+    target_plan_code: str,
+) -> None:
+    """
+    Block a downgrade when the tenant's existing usage exceeds the target
+    plan's persistent limits (seats, teams, guests, storage).
+
+    Raises 409 listing every resource over the new limit. No-op for plans
+    that are equal or higher (the target limit will simply be >= usage).
+    """
+    limits_result = await db.execute(
+        text("""
+            SELECT pl.key, pl.value AS limit_value
+            FROM plan_limits pl
+            JOIN plans p ON p.id = pl.plan_id
+            WHERE p.code = :code
+        """),
+        {"code": target_plan_code},
+    )
+    target_limits = {r["key"]: r["limit_value"] for r in limits_result.mappings().all()}
+    if not target_limits:
+        return  # Unknown plan: let the caller's own validation handle it.
+
+    violations: list[str] = []
+
+    for key, (label, count_sql) in _DOWNGRADE_RESOURCES.items():
+        limit_val = target_limits.get(key)
+        if limit_val is None or limit_val == -1:
+            continue  # Not limited on the target plan.
+        current = (await db.execute(text(count_sql), {"tid": str(tenant_id)})).scalar() or 0
+        if current > limit_val:
+            violations.append(f"{label}: لديك {current} والحد الجديد {limit_val}")
+
+    # Storage is measured in MB from accumulated bytes, handled separately.
+    storage_limit = target_limits.get("storage_mb")
+    if storage_limit is not None and storage_limit != -1:
+        current_bytes = await get_tenant_storage_bytes(db, tenant_id)
+        current_mb = current_bytes // (1024 * 1024)
+        if current_mb > storage_limit:
+            violations.append(f"التخزين: تستخدم {current_mb}MB والحد الجديد {storage_limit}MB")
+
+    if violations:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "لا يمكن التنزيل إلى هذه الباقة لأن استخدامك الحالي يتجاوز حدودها. "
+                "قلّل الاستخدام أولاً: " + "؛ ".join(violations)
+            ),
+        )
+
 
 async def enforce_monthly_limit(
     db: AsyncSession,

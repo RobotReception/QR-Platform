@@ -66,6 +66,39 @@ class Settings(BaseSettings):
         """Return supabase_anon_key, falling back to supabase_key."""
         return self.supabase_anon_key or self.supabase_key
 
+    @property
+    def is_production(self) -> bool:
+        return self.app_env.lower() == "production"
+
+    def validate_for_production(self) -> list[str]:
+        """Return a list of fatal misconfigurations for a production deployment.
+
+        Empty list means the configuration is safe to boot.
+        """
+        problems: list[str] = []
+
+        if not self.is_production:
+            return problems
+
+        if not self.invite_hmac_secret:
+            problems.append("INVITE_HMAC_SECRET is required in production (barcode signing key).")
+        if not self.supabase_jwt_secret and not self.supabase_url:
+            problems.append("SUPABASE_JWT_SECRET or SUPABASE_URL must be set to verify tokens.")
+        if not self.database_url:
+            problems.append("DATABASE_URL is required.")
+        if not self.supabase_service_role_key:
+            problems.append("SUPABASE_SERVICE_ROLE_KEY is required for admin operations.")
+
+        origins = [o.strip() for o in self.cors_allowed_origins.split(",") if o.strip()]
+        if not origins:
+            problems.append("CORS_ALLOWED_ORIGINS must be set in production.")
+        if "*" in origins:
+            problems.append("CORS_ALLOWED_ORIGINS must not be '*' when credentials are allowed.")
+        if any("localhost" in o or "127.0.0.1" in o for o in origins):
+            problems.append("CORS_ALLOWED_ORIGINS contains localhost in production.")
+
+        return problems
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

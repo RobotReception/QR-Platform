@@ -124,9 +124,9 @@ async def get_current_subscription(
 # ── Create PayPal Checkout Session ──
 @router.post("/subscriptions/checkout")
 async def create_checkout_session(
+    request: Request,
     plan_code: str,
     payment_provider: str = "paypal",
-    request: Request,
     user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -142,6 +142,10 @@ async def create_checkout_session(
     plan = plan_result.mappings().first()
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
+
+    # Block the change if current usage exceeds the target plan's limits.
+    from app.services.feature_service import check_downgrade_allowed
+    await check_downgrade_allowed(db, tenant_id, plan_code)
 
     # Check if PayPal is configured
     if not paypal_service.is_configured():
@@ -555,6 +559,12 @@ async def stripe_webhook(
                 },
             )
 
+            # Keep tenants.plan in sync (parity with the PayPal flow).
+            await db.execute(
+                text("UPDATE tenants SET plan = :plan_code, updated_at = now() WHERE id = :tid"),
+                {"plan_code": plan_code, "tid": tenant_id},
+            )
+
     # ── invoice.paid ──
     elif event_type == "invoice.paid":
         subscription_id = data.get("subscription")
@@ -610,6 +620,11 @@ async def stripe_webhook(
                             now() + INTERVAL '30 days'
                         )
                     """),
+                    {"tid": str(sub_row["tenant_id"])},
+                )
+                # Keep tenants.plan in sync on downgrade.
+                await db.execute(
+                    text("UPDATE tenants SET plan = 'starter', updated_at = now() WHERE id = :tid"),
                     {"tid": str(sub_row["tenant_id"])},
                 )
 

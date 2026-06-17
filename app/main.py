@@ -1,4 +1,5 @@
 import sys
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -21,6 +22,23 @@ def _configure_console_encoding() -> None:
 
 _configure_console_encoding()
 settings = get_settings()
+
+logging.basicConfig(
+    level=logging.INFO if settings.is_production else logging.DEBUG,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+# ── Fail fast on insecure/incomplete production configuration ──
+_config_problems = settings.validate_for_production()
+if _config_problems:
+    for _p in _config_problems:
+        logger.critical("Production config error: %s", _p)
+    raise RuntimeError(
+        "Refusing to start in production with invalid configuration: "
+        + "; ".join(_config_problems)
+    )
+
 allowed_origins = [
     origin.strip()
     for origin in settings.cors_allowed_origins.split(",")
@@ -31,8 +49,10 @@ app = FastAPI(
     title="SaaS Core API",
     description="Multi-tenant SaaS backend with Supabase Auth, RBAC, Billing, and Usage Tracking",
     version="2.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    # Hide interactive API docs in production.
+    docs_url=None if settings.is_production else "/docs",
+    redoc_url=None if settings.is_production else "/redoc",
+    openapi_url=None if settings.is_production else "/openapi.json",
 )
 
 # ── Middleware (order matters: last added = first executed) ──
@@ -73,12 +93,20 @@ app.include_router(registration_forms.router, prefix="/api/v1")
 
 @app.on_event("startup")
 async def startup_event():
+    logger.info("Starting API (env=%s, rate-limit backend=%s)", settings.app_env, _rate_backend())
     try:
         from app.services import storage_service
         await storage_service.ensure_bucket_exists()
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning("Could not ensure bucket exists on startup: %s", e)
+        logger.warning("Could not ensure bucket exists on startup: %s", e)
+
+
+def _rate_backend() -> str:
+    try:
+        from app.services.rate_limiter import rate_limiter
+        return rate_limiter.backend
+    except Exception:
+        return "unknown"
 
 
 @app.get("/health")

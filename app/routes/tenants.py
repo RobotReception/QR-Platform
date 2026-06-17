@@ -9,6 +9,9 @@ from app.auth import get_current_user, get_tenant_id_from_header, CurrentUser
 from app.database import get_db
 from app.models.tenant import TenantCreate, TenantRead, TenantUpdate, TenantSettingRead, TenantSettingWrite, TenantDomainRead, TenantDomainCreate
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 from app.models.membership import MembershipRead, MemberWithProfile, MembershipUpdate
 from app.services.membership_service import verify_membership, require_owner
 from app.services.audit_service import log_audit
@@ -304,6 +307,10 @@ async def create_member(
     tenant_id = get_tenant_id_from_header(request)
     await require_permission(db, tenant_id, user.id, "members.manage")
 
+    # ── Plan limit: seats_max (same enforcement as the invite path) ──
+    from app.services.feature_service import check_seats_limit
+    await check_seats_limit(db, tenant_id)
+
     # Validate role
     if body.role not in ("admin", "member", "viewer"):
         raise HTTPException(status_code=400, detail="الدور غير صالح")
@@ -336,7 +343,7 @@ async def create_member(
             new_user_id = str(result.user.id)
     except Exception as admin_error:
         # Admin API failed, try fallback method
-        print(f"Admin API failed: {admin_error}")
+        logger.warning("Admin API user creation failed, falling back to sign_up: %s", admin_error)
 
         # Try 2: Use sign_up (public API) - user will need email confirmation
         try:
@@ -351,7 +358,7 @@ async def create_member(
             if result and result.user:
                 new_user_id = str(result.user.id)
         except Exception as signup_error:
-            print(f"Sign up failed: {signup_error}")
+            logger.warning("sign_up fallback failed, attempting to locate existing user: %s", signup_error)
 
             # Try 3: User might already exist - find them
             try:

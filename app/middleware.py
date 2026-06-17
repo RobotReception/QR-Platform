@@ -3,11 +3,9 @@ Middleware for:
 1. Tenant Resolution (header → subdomain → custom domain → JWT)
 2. Tenant Status Enforcement (suspended/cancelled blocks access)
 3. Security Headers
-4. Rate Limiting (basic)
+4. Rate Limiting (Redis-backed sliding window, in-memory fallback)
 """
-import time
 import logging
-from collections import defaultdict
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -15,6 +13,7 @@ from sqlalchemy import text
 
 from app.tenant_context import set_current_tenant, clear_current_tenant
 from app.database import AsyncSessionLocal
+from app.services.rate_limiter import rate_limiter
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +60,6 @@ class TenantResolutionMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # Skip tenant resolution for exempt paths
         path = request.url.path
-        print(f"TenantResolutionMiddleware: path={path}, is_exempt={path.startswith('/api/v1/templates/fonts/file/')}", flush=True)
         if any(path.startswith(p) for p in TENANT_EXEMPT_PATHS) or path.startswith("/api/v1/templates/fonts/file/"):
             response = await call_next(request)
             return response
@@ -159,14 +157,13 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """
-    In-memory rate limiting per IP with tiered limits.
+    Tiered rate limiting per IP, backed by the shared sliding-window limiter
+    (Redis when available, in-memory fallback otherwise).
 
     Three tiers:
       1. Public endpoints (view/rsvp): 30/min — brute-force prevention (no auth)
       2. Check-in scan: 300/min + burst 20/3s — high-throughput gate ops (JWT required)
       3. Everything else: 120/min — general protection
-
-    For production use Redis-backed rate limiting.
     """
 
     # Public endpoints: truly unauthenticated, strict limit
@@ -195,74 +192,50 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.checkin_per_minute = checkin_per_minute
         self.checkin_burst_max = checkin_burst_max
         self.checkin_burst_window = checkin_burst_window
-        self._requests: dict[str, list[float]] = defaultdict(list)
-        self._public_requests: dict[str, list[float]] = defaultdict(list)
-        self._checkin_requests: dict[str, list[float]] = defaultdict(list)
 
     async def dispatch(self, request: Request, call_next):
         client_ip = request.client.host if request.client else "unknown"
-        now = time.time()
-        window = 60.0
         path = request.url.path
 
         # Tier 1: Public endpoints (30/min) — brute-force prevention
-        is_public = any(path.startswith(p) for p in self.PUBLIC_PREFIXES)
-        if is_public:
-            self._public_requests[client_ip] = [
-                t for t in self._public_requests[client_ip] if now - t < window
-            ]
-            if len(self._public_requests[client_ip]) >= self.public_per_minute:
+        if any(path.startswith(p) for p in self.PUBLIC_PREFIXES):
+            if not await rate_limiter.hit(f"public:{client_ip}", self.public_per_minute, 60.0):
                 logger.warning("Public rate limit hit: IP=%s path=%s", client_ip, path)
                 return JSONResponse(
                     status_code=429,
                     content={"detail": "تم تجاوز حد الطلبات. حاول مرة أخرى بعد دقيقة."},
                     headers={"Retry-After": "60"},
                 )
-            self._public_requests[client_ip].append(now)
 
         # Tier 2: Check-in (300/min + burst 20/3s) — high-throughput gate ops
-        # Rate limit key: ip + user_id (from JWT) to avoid NAT collisions at venues
-        is_checkin = any(path.startswith(p) for p in self.CHECKIN_PREFIXES)
-        if is_checkin:
-            # Extract user_id from Authorization header for composite key
+        # Rate limit key: ip + user_id hint (from JWT) to avoid NAT collisions at venues
+        if any(path.startswith(p) for p in self.CHECKIN_PREFIXES):
             auth_header = request.headers.get("authorization", "")
             user_hint = auth_header[-12:] if len(auth_header) > 12 else ""
-            checkin_key = f"{client_ip}:{user_hint}"
+            checkin_key = f"checkin:{client_ip}:{user_hint}"
 
-            self._checkin_requests[checkin_key] = [
-                t for t in self._checkin_requests[checkin_key] if now - t < window
-            ]
-            # Per-minute limit
-            if len(self._checkin_requests[checkin_key]) >= self.checkin_per_minute:
+            if not await rate_limiter.hit(checkin_key, self.checkin_per_minute, 60.0):
                 logger.warning("Check-in rate limit hit: key=%s", checkin_key)
                 return JSONResponse(
                     status_code=429,
                     content={"detail": "تم تجاوز حد طلبات تسجيل الدخول."},
                     headers={"Retry-After": "10"},
                 )
-            # Burst protection (20 requests in 3 seconds)
-            recent_burst = [t for t in self._checkin_requests[checkin_key] if now - t < self.checkin_burst_window]
-            if len(recent_burst) >= self.checkin_burst_max:
-                logger.warning("Check-in burst limit hit: key=%s (%d in %.0fs)", checkin_key, len(recent_burst), self.checkin_burst_window)
+            if not await rate_limiter.hit(f"{checkin_key}:burst", self.checkin_burst_max, self.checkin_burst_window):
+                logger.warning("Check-in burst limit hit: key=%s", checkin_key)
                 return JSONResponse(
                     status_code=429,
                     content={"detail": "طلبات سريعة جداً. انتظر لحظات."},
                     headers={"Retry-After": "3"},
                 )
-            self._checkin_requests[checkin_key].append(now)
 
         # Tier 3: Global rate limit (120/min)
-        self._requests[client_ip] = [
-            t for t in self._requests[client_ip] if now - t < window
-        ]
-
-        if len(self._requests[client_ip]) >= self.requests_per_minute:
+        if not await rate_limiter.hit(f"global:{client_ip}", self.requests_per_minute, 60.0):
             return JSONResponse(
                 status_code=429,
                 content={"detail": "تم تجاوز حد الطلبات. حاول مرة أخرى بعد قليل."},
                 headers={"Retry-After": "60"},
             )
 
-        self._requests[client_ip].append(now)
         response = await call_next(request)
         return response
