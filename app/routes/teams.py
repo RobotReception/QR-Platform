@@ -6,8 +6,13 @@ from uuid import UUID
 
 from app.auth import get_current_user, get_tenant_id_from_header, CurrentUser
 from app.database import get_db
-from app.models.team import TeamCreate, TeamRead, TeamUpdate, TeamMemberRead, TeamMemberAdd
+from app.models.team import (
+    TeamCreate, TeamRead, TeamUpdate, TeamMemberRead, TeamMemberAdd,
+    TeamRequestCreate, TeamRequestRead,
+    EventTeamAssignmentRead, AssignmentResponse,
+)
 from app.services.permission_service import require_permission
+from app.services.team_service import require_team_lead, is_team_lead
 from app.services.audit_service import log_audit
 
 router = APIRouter(prefix="/teams", tags=["Teams"])
@@ -126,6 +131,178 @@ async def create_team(
 
     await db.commit()
     return TeamRead(**row)
+
+
+# ══════════════════════════════════════════════
+# TEAM CREATION REQUESTS (member proposes → platform approves)
+# ══════════════════════════════════════════════
+
+@router.post("/requests", response_model=TeamRequestRead, status_code=201)
+async def create_team_request(
+    body: TeamRequestCreate, request: Request,
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tenant_id = get_tenant_id_from_header(request)
+    await require_permission(db, tenant_id, user.id, "teams.request")
+
+    if body.proposed_leader_id:
+        check = await db.execute(
+            text("SELECT 1 FROM memberships WHERE tenant_id = :tid AND user_id = :uid AND status = 'active'"),
+            {"tid": str(tenant_id), "uid": str(body.proposed_leader_id)},
+        )
+        if not check.first():
+            raise HTTPException(400, "القائد المقترح ليس عضواً نشطاً في المؤسسة")
+
+    try:
+        result = await db.execute(
+            text("""
+                INSERT INTO team_requests
+                    (tenant_id, requested_by, name, description, color, proposed_leader_id)
+                VALUES (:tid, :uid, :name, :desc, :color, :leader)
+                RETURNING *
+            """),
+            {
+                "tid": str(tenant_id), "uid": str(user.id), "name": body.name,
+                "desc": body.description, "color": body.color,
+                "leader": str(body.proposed_leader_id) if body.proposed_leader_id else None,
+            },
+        )
+    except Exception:
+        await db.rollback()
+        raise HTTPException(409, "يوجد طلب معلّق بهذا الاسم بالفعل")
+
+    row = dict(result.mappings().first())
+    await log_audit(db, tenant_id=tenant_id, actor_user_id=user.id,
+                    action="team_request.create", resource_type="team_request",
+                    resource_id=str(row["id"]),
+                    ip_address=request.client.host if request.client else None)
+    await db.commit()
+    return TeamRequestRead(**row)
+
+
+@router.get("/requests", response_model=list[TeamRequestRead])
+async def list_team_requests(
+    request: Request,
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Requests in this tenant. Admins see all; members see their own."""
+    tenant_id = get_tenant_id_from_header(request)
+    await require_permission(db, tenant_id, user.id, "teams.request")
+
+    from app.services.permission_service import has_permission
+    can_manage = await has_permission(db, tenant_id, user.id, "teams.manage")
+
+    query = """
+        SELECT tr.*, p.full_name AS requester_name
+        FROM team_requests tr
+        JOIN profiles p ON p.id = tr.requested_by
+        WHERE tr.tenant_id = :tid
+    """
+    params = {"tid": str(tenant_id)}
+    if not can_manage:
+        query += " AND tr.requested_by = :uid"
+        params["uid"] = str(user.id)
+    query += " ORDER BY tr.created_at DESC"
+
+    result = await db.execute(text(query), params)
+    return [TeamRequestRead(**dict(r)) for r in result.mappings().all()]
+
+
+# ══════════════════════════════════════════════
+# TEAM LEAD: event-assignment inbox + response
+# ══════════════════════════════════════════════
+
+@router.get("/assignments/inbox", response_model=list[EventTeamAssignmentRead])
+async def assignment_inbox(
+    request: Request,
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Pending event assignments for teams the user leads."""
+    tenant_id = get_tenant_id_from_header(request)
+    await require_permission(db, tenant_id, user.id, "teams.view")
+
+    result = await db.execute(
+        text("""
+            SELECT eta.*, e.title AS event_title, e.start_date AS event_start_date,
+                   t.name AS team_name
+            FROM event_team_assignments eta
+            JOIN teams t ON t.id = eta.team_id
+            JOIN team_memberships tm ON tm.team_id = eta.team_id
+            JOIN events e ON e.id = eta.event_id
+            WHERE eta.tenant_id = :tid
+              AND tm.user_id = :uid AND tm.role = 'team_lead'
+              AND eta.status = 'pending'
+            ORDER BY eta.created_at DESC
+        """),
+        {"tid": str(tenant_id), "uid": str(user.id)},
+    )
+    return [EventTeamAssignmentRead(**dict(r)) for r in result.mappings().all()]
+
+
+async def _respond_assignment(
+    assignment_id: UUID, decision: str, note: str | None,
+    tenant_id: UUID, user: CurrentUser, db: AsyncSession, request: Request,
+) -> EventTeamAssignmentRead:
+    result = await db.execute(
+        text("SELECT * FROM event_team_assignments WHERE id = :id AND tenant_id = :tid"),
+        {"id": str(assignment_id), "tid": str(tenant_id)},
+    )
+    assignment = result.mappings().first()
+    if not assignment:
+        raise HTTPException(404, "الإسناد غير موجود")
+    if assignment["status"] != "pending":
+        raise HTTPException(409, "تمت الاستجابة لهذا الإسناد مسبقاً")
+
+    await require_team_lead(db, assignment["team_id"], user.id)
+
+    updated = await db.execute(
+        text("""
+            UPDATE event_team_assignments
+            SET status = :st, responded_by = :uid, response_note = :note, responded_at = now()
+            WHERE id = :id
+            RETURNING *
+        """),
+        {"st": decision, "uid": str(user.id), "note": note, "id": str(assignment_id)},
+    )
+    row = dict(updated.mappings().first())
+
+    if decision == "accepted":
+        await db.execute(
+            text("UPDATE events SET team_id = :team WHERE id = :eid AND tenant_id = :tid"),
+            {"team": str(assignment["team_id"]), "eid": str(assignment["event_id"]), "tid": str(tenant_id)},
+        )
+
+    await log_audit(db, tenant_id=tenant_id, actor_user_id=user.id,
+                    action=f"event_assignment.{decision}", resource_type="event_team_assignment",
+                    resource_id=str(assignment_id),
+                    ip_address=request.client.host if request.client else None)
+    await db.commit()
+    return EventTeamAssignmentRead(**row)
+
+
+@router.post("/assignments/{assignment_id}/accept", response_model=EventTeamAssignmentRead)
+async def accept_assignment(
+    assignment_id: UUID, body: AssignmentResponse, request: Request,
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tenant_id = get_tenant_id_from_header(request)
+    await require_permission(db, tenant_id, user.id, "teams.view")
+    return await _respond_assignment(assignment_id, "accepted", body.note, tenant_id, user, db, request)
+
+
+@router.post("/assignments/{assignment_id}/reject", response_model=EventTeamAssignmentRead)
+async def reject_assignment(
+    assignment_id: UUID, body: AssignmentResponse, request: Request,
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tenant_id = get_tenant_id_from_header(request)
+    await require_permission(db, tenant_id, user.id, "teams.view")
+    return await _respond_assignment(assignment_id, "rejected", body.note, tenant_id, user, db, request)
 
 
 @router.get("/{team_id}", response_model=TeamRead)

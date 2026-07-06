@@ -353,6 +353,26 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.feature_flags
 -- ============================================================
 -- 15) ROW LEVEL SECURITY (RLS)
 -- ============================================================
+--
+-- ⚠️ ARCHITECTURE NOTE — RLS is NOT the active isolation layer.
+--
+-- The application connects via DATABASE_URL as the `postgres` role, which
+-- BYPASSES RLS, and the asyncpg session never sets a Supabase JWT context,
+-- so `auth.uid()` evaluates to NULL inside these policies. As a result the
+-- policies below are effectively INERT for all application traffic.
+--
+-- Tenant isolation is enforced exclusively at the APPLICATION layer:
+--   * require_permission() / user_has_permission() — membership-scoped RBAC
+--   * TenantQuery — forces `WHERE tenant_id = :tid` on every query
+-- This is reviewed, tested, and is the source of truth for isolation.
+--
+-- The policies are kept as DOCUMENTATION of intended access rules and as a
+-- ready foundation IF we later move to per-request non-superuser DB sessions
+-- with JWT context (defense-in-depth). Until then, do NOT rely on them.
+--
+-- DECISION: see docs/adr/0001-rls-not-active-isolation.md
+-- INVARIANT: every new endpoint MUST pass require_permission + TenantQuery.
+-- ============================================================
 
 -- Enable RLS on all tenant-scoped tables
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;

@@ -11,14 +11,17 @@ Plans:
   5. Enterprise — تسعير مخصص
 """
 import json
+import os
 import sys
 import urllib.request
 import urllib.error
 
 sys.stdout.reconfigure(encoding="utf-8")
 
-SUPABASE_URL = "http://127.0.0.1:54821"
-SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU"
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "http://127.0.0.1:54821")
+SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+if not SERVICE_ROLE_KEY:
+    sys.exit("SUPABASE_SERVICE_ROLE_KEY env var is required (do not hardcode keys).")
 
 
 def supabase_sql(sql: str) -> dict:

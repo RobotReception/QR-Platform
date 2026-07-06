@@ -51,6 +51,32 @@ export interface SignupRequest {
   organization_name?: string
 }
 
+// ── Organizer-team registration request (awaits platform approval) ──
+export interface OrgRequest {
+  full_name:                  string
+  email:                      string
+  password:                   string
+  phone?:                     string
+  org_name:                   string
+  org_type?:                  string
+  description?:               string
+  city?:                      string
+  country?:                   string
+  website?:                   string
+  contact_handle?:            string
+  expected_events_per_month?: number
+  expected_attendees?:        number
+  requested_plan_code?:       string
+  proof_url?:                 string
+  documents_url?:             string
+  notes?:                     string
+}
+
+export interface OrgRequestResponse {
+  message:     string
+  request_id?: string
+}
+
 export interface ForgotPasswordRequest {
   email: string
 }

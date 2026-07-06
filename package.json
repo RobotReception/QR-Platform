@@ -1,8 +1,8 @@
 {
+  "name": "qr-platform-root",
+  "private": true,
+  "description": "Repository root. The application frontend lives in ./frontend and has its own package.json. This file only holds dev/debug script dependencies.",
   "dependencies": {
-    "axios": "^1.13.5",
-    "framer-motion": "^12.34.0",
-    "lucide-react": "^0.563.0",
-    "react-router-dom": "^7.13.0"
+    "axios": "^1.7.9"
   }
 }

@@ -13,7 +13,9 @@ from app.models.event import (
     EventTypeRead, EventTypeCreate,
     EventGateRead, EventGateCreate,
 )
-from app.services.permission_service import require_permission
+from app.models.team import EventAssignCreate, EventTeamAssignmentRead
+from app.services.permission_service import require_permission, has_permission
+from app.services.team_service import get_user_team_ids
 from app.services.audit_service import log_audit
 
 router = APIRouter(prefix="/events", tags=["Events"])
@@ -183,6 +185,21 @@ async def list_events(
     if status_filter:
         query += " AND status = :status"
         params["status"] = status_filter
+
+    # ── Team visibility isolation ──
+    # Org-wide managers (events.edit) see every event. Other users see only
+    # unassigned events plus events assigned to teams they belong to.
+    can_view_all = await has_permission(db, tenant_id, user.id, "events.edit")
+    if not can_view_all:
+        team_ids = await get_user_team_ids(db, tenant_id, user.id)
+        if team_ids:
+            placeholders = ", ".join(f":team_{i}" for i in range(len(team_ids)))
+            query += f" AND (team_id IS NULL OR team_id IN ({placeholders}))"
+            for i, tid in enumerate(team_ids):
+                params[f"team_{i}"] = tid
+        else:
+            query += " AND team_id IS NULL"
+
     query += " ORDER BY start_date DESC"
 
     result = await db.execute(text(query), params)
@@ -367,6 +384,78 @@ async def delete_event(
                     action="event.delete", resource_type="event", resource_id=str(event_id),
                     ip_address=request.client.host if request.client else None)
     await db.commit()
+
+
+# ══════════════════════════════════════════════
+# EVENT → TEAM ASSIGNMENT (admin assigns; team lead accepts)
+# ══════════════════════════════════════════════
+
+@router.post("/{event_id}/assign", response_model=EventTeamAssignmentRead, status_code=201)
+async def assign_event_to_team(
+    event_id: UUID, body: EventAssignCreate, request: Request,
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Assign an event to a team. The team lead must then accept/reject."""
+    tenant_id = get_tenant_id_from_header(request)
+    await require_permission(db, tenant_id, user.id, "teams.assign_events")
+
+    ev = await db.execute(
+        text("SELECT 1 FROM events WHERE id = :id AND tenant_id = :tid"),
+        {"id": str(event_id), "tid": str(tenant_id)},
+    )
+    if not ev.first():
+        raise HTTPException(404, "الحدث غير موجود")
+
+    team = await db.execute(
+        text("SELECT 1 FROM teams WHERE id = :id AND tenant_id = :tid"),
+        {"id": str(body.team_id), "tid": str(tenant_id)},
+    )
+    if not team.first():
+        raise HTTPException(404, "الفريق غير موجود")
+
+    try:
+        result = await db.execute(
+            text("""
+                INSERT INTO event_team_assignments (event_id, team_id, tenant_id, assigned_by)
+                VALUES (:eid, :team, :tid, :uid)
+                RETURNING *
+            """),
+            {"eid": str(event_id), "team": str(body.team_id),
+             "tid": str(tenant_id), "uid": str(user.id)},
+        )
+    except Exception:
+        await db.rollback()
+        raise HTTPException(409, "هذا الحدث مُسند لهذا الفريق بالفعل")
+
+    row = dict(result.mappings().first())
+    await log_audit(db, tenant_id=tenant_id, actor_user_id=user.id,
+                    action="event.assign_team", resource_type="event", resource_id=str(event_id),
+                    ip_address=request.client.host if request.client else None)
+    await db.commit()
+    return EventTeamAssignmentRead(**row)
+
+
+@router.get("/{event_id}/assignments", response_model=list[EventTeamAssignmentRead])
+async def list_event_assignments(
+    event_id: UUID, request: Request,
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tenant_id = get_tenant_id_from_header(request)
+    await require_permission(db, tenant_id, user.id, "events.view")
+
+    result = await db.execute(
+        text("""
+            SELECT eta.*, t.name AS team_name
+            FROM event_team_assignments eta
+            JOIN teams t ON t.id = eta.team_id
+            WHERE eta.event_id = :eid AND eta.tenant_id = :tid
+            ORDER BY eta.created_at DESC
+        """),
+        {"eid": str(event_id), "tid": str(tenant_id)},
+    )
+    return [EventTeamAssignmentRead(**dict(r)) for r in result.mappings().all()]
 
 
 @router.post("/{event_id}/publish", response_model=EventRead)

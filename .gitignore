@@ -15,3 +15,20 @@ dist/
 build/
 .idea/
 .vscode/
+
+# Debug / scratch artifacts (kept on disk, not in VCS)
+scratch/
+debug_*.png
+test_render*.png
+normal_bg.png
+*.out.log
+*.err.log
+.pytest_cache/
+
+
+# Captured runtime artifacts (contain tokens)
+auth-data.json
+tests/test_users_results.txt
+
+# TS build cache
+*.tsbuildinfo

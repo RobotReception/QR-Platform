@@ -4,7 +4,11 @@ Only accessible by users with is_staff=true (super admins).
 Full platform management: tenants, users, plans, subscriptions, analytics.
 """
 import json
-from fastapi import APIRouter, Depends, HTTPException, Request, Query, status
+import re
+import secrets
+import asyncio
+import logging
+from fastapi import APIRouter, Depends, HTTPException, Request, Query, status, BackgroundTasks
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
@@ -12,11 +16,16 @@ from typing import Optional
 from pydantic import BaseModel
 
 from app.auth import get_current_user, CurrentUser
-from app.database import get_db
+from app.database import get_db, get_supabase_admin, get_supabase_client
 from app.models.tenant import TenantRead
+from app.models.team import TeamRequestRead, TeamRequestReview
 from app.services.audit_service import log_audit
 from app.services.staff_service import require_staff
+from app.services.provisioning_service import provision_tenant_manual
+from app.services.email_service import send_org_request_approved, send_org_request_rejected
 from app.routes.roles import PermissionRead, RoleRead, RoleCreate, RoleUpdate
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/platform", tags=["Platform Admin"])
 
@@ -921,3 +930,387 @@ async def platform_delete_role(
         ip_address=request.client.host if request.client else None,
     )
     await db.commit()
+
+
+# ══════════════════════════════════════════════════
+# TEAM CREATION REQUESTS — platform approval
+# ══════════════════════════════════════════════════
+
+@router.get("/team-requests", response_model=list[TeamRequestRead])
+async def platform_list_team_requests(
+    status_filter: Optional[str] = Query("pending", alias="status"),
+    user: CurrentUser = Depends(require_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    """List team-creation requests across all tenants. Staff only."""
+    query = """
+        SELECT tr.*, p.full_name AS requester_name, tn.name AS tenant_name
+        FROM team_requests tr
+        JOIN profiles p ON p.id = tr.requested_by
+        JOIN tenants tn ON tn.id = tr.tenant_id
+    """
+    params = {}
+    if status_filter and status_filter != "all":
+        query += " WHERE tr.status = :st"
+        params["st"] = status_filter
+    query += " ORDER BY tr.created_at DESC"
+
+    result = await db.execute(text(query), params)
+    return [TeamRequestRead(**dict(r)) for r in result.mappings().all()]
+
+
+@router.post("/team-requests/{request_id}/approve", response_model=TeamRequestRead)
+async def platform_approve_team_request(
+    request_id: UUID,
+    body: TeamRequestReview,
+    request: Request,
+    user: CurrentUser = Depends(require_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    """Approve a team request: create the team + leader membership."""
+    res = await db.execute(
+        text("SELECT * FROM team_requests WHERE id = :id"),
+        {"id": str(request_id)},
+    )
+    tr = res.mappings().first()
+    if not tr:
+        raise HTTPException(404, "الطلب غير موجود")
+    if tr["status"] != "pending":
+        raise HTTPException(409, "تمت معالجة هذا الطلب مسبقاً")
+
+    tenant_id = tr["tenant_id"]
+
+    # Create the team
+    team_res = await db.execute(
+        text("""
+            INSERT INTO teams (tenant_id, name, description, color, created_by)
+            VALUES (:tid, :name, :desc, :color, :uid)
+            RETURNING id
+        """),
+        {
+            "tid": str(tenant_id), "name": tr["name"], "desc": tr["description"],
+            "color": tr["color"], "uid": str(tr["requested_by"]),
+        },
+    )
+    team_id = team_res.scalar()
+
+    # Assign the leader (proposed leader, falling back to the requester)
+    leader_id = tr["proposed_leader_id"] or tr["requested_by"]
+    await db.execute(
+        text("""
+            INSERT INTO team_memberships (team_id, user_id, role)
+            VALUES (:tid, :uid, 'team_lead')
+            ON CONFLICT (team_id, user_id) DO UPDATE SET role = 'team_lead'
+        """),
+        {"tid": str(team_id), "uid": str(leader_id)},
+    )
+
+    updated = await db.execute(
+        text("""
+            UPDATE team_requests
+            SET status = 'approved', reviewed_by = :rev, review_note = :note,
+                reviewed_at = now(), created_team_id = :team
+            WHERE id = :id
+            RETURNING *
+        """),
+        {"rev": str(user.id), "note": body.note, "team": str(team_id), "id": str(request_id)},
+    )
+    row = dict(updated.mappings().first())
+
+    await log_audit(db, tenant_id=tenant_id, actor_user_id=user.id,
+                    action="platform.team_request.approve", resource_type="team_request",
+                    resource_id=str(request_id),
+                    ip_address=request.client.host if request.client else None)
+    await db.commit()
+    return TeamRequestRead(**row)
+
+
+@router.post("/team-requests/{request_id}/reject", response_model=TeamRequestRead)
+async def platform_reject_team_request(
+    request_id: UUID,
+    body: TeamRequestReview,
+    request: Request,
+    user: CurrentUser = Depends(require_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    """Reject a team request."""
+    res = await db.execute(
+        text("SELECT * FROM team_requests WHERE id = :id"),
+        {"id": str(request_id)},
+    )
+    tr = res.mappings().first()
+    if not tr:
+        raise HTTPException(404, "الطلب غير موجود")
+    if tr["status"] != "pending":
+        raise HTTPException(409, "تمت معالجة هذا الطلب مسبقاً")
+
+    updated = await db.execute(
+        text("""
+            UPDATE team_requests
+            SET status = 'rejected', reviewed_by = :rev, review_note = :note, reviewed_at = now()
+            WHERE id = :id
+            RETURNING *
+        """),
+        {"rev": str(user.id), "note": body.note, "id": str(request_id)},
+    )
+    row = dict(updated.mappings().first())
+
+    await log_audit(db, tenant_id=tr["tenant_id"], actor_user_id=user.id,
+                    action="platform.team_request.reject", resource_type="team_request",
+                    resource_id=str(request_id),
+                    ip_address=request.client.host if request.client else None)
+    await db.commit()
+    return TeamRequestRead(**row)
+
+
+# ══════════════════════════════════════════════════
+# ORGANIZER-TEAM REGISTRATION REQUESTS — platform approval
+# ══════════════════════════════════════════════════
+
+class OrgRequestRead(BaseModel):
+    id: UUID
+    status: str
+    full_name: str
+    email: str
+    phone: Optional[str] = None
+    org_name: str
+    org_type: Optional[str] = None
+    description: Optional[str] = None
+    city: Optional[str] = None
+    country: Optional[str] = None
+    website: Optional[str] = None
+    contact_handle: Optional[str] = None
+    expected_events_per_month: Optional[int] = None
+    expected_attendees: Optional[int] = None
+    requested_plan_code: Optional[str] = None
+    proof_url: Optional[str] = None
+    documents_url: Optional[str] = None
+    notes: Optional[str] = None
+    review_note: Optional[str] = None
+    reviewed_at: Optional[str] = None
+    created_tenant_id: Optional[UUID] = None
+    created_at: str
+
+
+class OrgRequestReview(BaseModel):
+    note: Optional[str] = None
+
+
+def _org_request_row(r) -> OrgRequestRead:
+    d = dict(r)
+    for k in ("reviewed_at", "created_at"):
+        if d.get(k) is not None:
+            d[k] = str(d[k])
+    return OrgRequestRead(**{k: d.get(k) for k in OrgRequestRead.model_fields})
+
+
+@router.get("/org-requests", response_model=list[OrgRequestRead])
+async def platform_list_org_requests(
+    status_filter: Optional[str] = Query("pending", alias="status"),
+    user: CurrentUser = Depends(require_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    """List organizer-team registration requests. Staff only."""
+    query = "SELECT * FROM organization_requests"
+    params = {}
+    if status_filter and status_filter != "all":
+        query += " WHERE status = :st"
+        params["st"] = status_filter
+    query += " ORDER BY created_at DESC"
+    result = await db.execute(text(query), params)
+    return [_org_request_row(r) for r in result.mappings().all()]
+
+
+@router.post("/org-requests/{request_id}/approve", response_model=OrgRequestRead)
+async def platform_approve_org_request(
+    request_id: UUID,
+    body: OrgRequestReview,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    user: CurrentUser = Depends(require_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    """Approve an org request: create the Supabase user, tenant, and provision it."""
+    from app.services.secret_box import decrypt_secret
+
+    res = await db.execute(
+        text("SELECT * FROM organization_requests WHERE id = :id"),
+        {"id": str(request_id)},
+    )
+    req = res.mappings().first()
+    if not req:
+        raise HTTPException(404, "الطلب غير موجود")
+    if req["status"] != "pending":
+        raise HTTPException(409, "تمت معالجة هذا الطلب مسبقاً")
+
+    email = req["email"].lower().strip()
+
+    # ── Decrypt the applicant's password ──
+    try:
+        password = decrypt_secret(req["password_encrypted"])
+    except Exception:
+        raise HTTPException(500, "تعذّر استرجاع بيانات الطلب. يرجى التواصل مع الدعم.")
+
+    # ── Create the Supabase user (admin API, with sign_up fallback) ──
+    new_user_id = ""
+    try:
+        admin = get_supabase_admin()
+        created = await asyncio.to_thread(
+            admin.auth.admin.create_user,
+            {
+                "email": email,
+                "password": password,
+                "email_confirm": True,
+                "user_metadata": {"full_name": req["full_name"] or ""},
+            },
+        )
+        if created and created.user:
+            new_user_id = str(created.user.id)
+    except Exception as admin_err:
+        logger.warning("Admin create_user failed for org request %s: %s", request_id, admin_err)
+        try:
+            client = get_supabase_client()
+            signed = await asyncio.to_thread(
+                client.auth.sign_up,
+                {"email": email, "password": password,
+                 "options": {"data": {"full_name": req["full_name"] or ""}}},
+            )
+            if signed and signed.user:
+                new_user_id = str(signed.user.id)
+        except Exception as signup_err:
+            logger.error("sign_up fallback failed for org request %s: %s", request_id, signup_err)
+
+    if not new_user_id:
+        raise HTTPException(500, "فشل إنشاء حساب المستخدم. حاول مرة أخرى.")
+
+    # ── Create tenant + membership + subscription + provisioning + profile ──
+    try:
+        org_name = req["org_name"]
+        base_slug = re.sub(r"[^a-z0-9]+", "-", org_name.lower()).strip("-")
+        if len(base_slug) < 3:
+            base_slug = f"org-{base_slug}"
+        slug = f"{base_slug[:40]}-{secrets.token_hex(3)}"
+        plan_code = req["requested_plan_code"] or "starter"
+
+        tenant_result = await db.execute(
+            text("""
+                INSERT INTO tenants (slug, name, created_by, metadata)
+                VALUES (:slug, :name, :created_by, '{}'::jsonb)
+                RETURNING id, slug, name, status, plan, created_at
+            """),
+            {"slug": slug, "name": org_name, "created_by": new_user_id},
+        )
+        tenant = tenant_result.mappings().first()
+        tenant_id = str(tenant["id"])
+
+        await db.execute(
+            text("""
+                INSERT INTO memberships (tenant_id, user_id, role, status)
+                VALUES (:tid, :uid, 'owner', 'active')
+            """),
+            {"tid": tenant_id, "uid": new_user_id},
+        )
+
+        await db.execute(
+            text("""
+                INSERT INTO subscriptions (tenant_id, plan_id, status,
+                    current_period_start, current_period_end, trial_ends_at)
+                VALUES (
+                    :tid,
+                    COALESCE((SELECT id FROM plans WHERE code = :plan_code),
+                             (SELECT id FROM plans WHERE code = 'starter')),
+                    'active', now(), now() + INTERVAL '30 days',
+                    now() + INTERVAL '14 days'
+                )
+            """),
+            {"tid": tenant_id, "plan_code": plan_code},
+        )
+
+        await provision_tenant_manual(db, tenant["id"], UUID(new_user_id))
+
+        await db.execute(
+            text("""
+                INSERT INTO profiles (id, full_name, avatar_url)
+                VALUES (:uid, :name, '')
+                ON CONFLICT (id) DO NOTHING
+            """),
+            {"uid": new_user_id, "name": req["full_name"] or ""},
+        )
+
+        # Mark request approved + wipe the stored password.
+        updated = await db.execute(
+            text("""
+                UPDATE organization_requests
+                SET status = 'approved', reviewed_by = :rev, review_note = :note,
+                    reviewed_at = now(), created_tenant_id = :tid, created_user_id = :uid,
+                    password_encrypted = NULL
+                WHERE id = :id
+                RETURNING *
+            """),
+            {"rev": str(user.id), "note": body.note, "tid": tenant_id,
+             "uid": new_user_id, "id": str(request_id)},
+        )
+        row = updated.mappings().first()
+
+        await log_audit(db, tenant_id=tenant["id"], actor_user_id=user.id,
+                        action="platform.org_request.approve", resource_type="organization_request",
+                        resource_id=str(request_id),
+                        ip_address=request.client.host if request.client else None)
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        logger.error("Provisioning failed for approved org request %s: %s", request_id, e)
+        # Roll back the orphaned Supabase user.
+        try:
+            admin = get_supabase_admin()
+            await asyncio.to_thread(admin.auth.admin.delete_user, new_user_id)
+        except Exception as cleanup_err:
+            logger.error("Failed to roll back auth user %s: %s", new_user_id, cleanup_err)
+        raise HTTPException(500, "فشل تجهيز المؤسسة. لم تتم الموافقة. حاول مرة أخرى.")
+
+    background_tasks.add_task(send_org_request_approved, email, req["full_name"], org_name)
+    return _org_request_row(row)
+
+
+@router.post("/org-requests/{request_id}/reject", response_model=OrgRequestRead)
+async def platform_reject_org_request(
+    request_id: UUID,
+    body: OrgRequestReview,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    user: CurrentUser = Depends(require_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    """Reject an org request and wipe the stored password."""
+    res = await db.execute(
+        text("SELECT * FROM organization_requests WHERE id = :id"),
+        {"id": str(request_id)},
+    )
+    req = res.mappings().first()
+    if not req:
+        raise HTTPException(404, "الطلب غير موجود")
+    if req["status"] != "pending":
+        raise HTTPException(409, "تمت معالجة هذا الطلب مسبقاً")
+
+    updated = await db.execute(
+        text("""
+            UPDATE organization_requests
+            SET status = 'rejected', reviewed_by = :rev, review_note = :note,
+                reviewed_at = now(), password_encrypted = NULL
+            WHERE id = :id
+            RETURNING *
+        """),
+        {"rev": str(user.id), "note": body.note, "id": str(request_id)},
+    )
+    row = updated.mappings().first()
+
+    await log_audit(db, tenant_id=None, actor_user_id=user.id,
+                    action="platform.org_request.reject", resource_type="organization_request",
+                    resource_id=str(request_id),
+                    ip_address=request.client.host if request.client else None)
+    await db.commit()
+
+    background_tasks.add_task(
+        send_org_request_rejected, req["email"], req["full_name"], req["org_name"], body.note or "",
+    )
+    return _org_request_row(row)

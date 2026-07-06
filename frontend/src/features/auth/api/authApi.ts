@@ -2,7 +2,7 @@ import http, { STORAGE } from '@services/http/client'
 import type {
   AuthResponse, LoginRequest, SignupRequest,
   SendOtpRequest, VerifyOtpRequest, ConfirmNewPasswordRequest, OtpResponse,
-  MeResponse,
+  MeResponse, OrgRequest, OrgRequestResponse,
 } from '../types'
 
 export const authAPI = {
@@ -20,6 +20,12 @@ export const authAPI = {
   // POST /auth/signup
   signup: async (body: SignupRequest): Promise<AuthResponse> => {
     const { data } = await http.post<AuthResponse>('/auth/signup', body)
+    return data
+  },
+
+  // POST /auth/org-request (organizer-team registration request)
+  orgRequest: async (body: OrgRequest): Promise<OrgRequestResponse> => {
+    const { data } = await http.post<OrgRequestResponse>('/auth/org-request', body)
     return data
   },
 

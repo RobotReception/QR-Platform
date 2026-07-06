@@ -1,9 +1,12 @@
 import json
+import logging
 from uuid import UUID
 from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import Request
+
+logger = logging.getLogger(__name__)
 
 
 async def log_audit(
@@ -53,8 +56,8 @@ async def log_audit(
             },
         )
     except Exception as e:
-        # For now, just print the error and continue
-        print(f"Audit log error: {e}")
+        # Audit logging must never break the main operation.
+        logger.error("Audit log error: %s", e)
         # Don't fail the main operation due to audit logging issues
 
 

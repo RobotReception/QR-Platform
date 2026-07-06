@@ -153,6 +153,86 @@ def send_welcome_email(to_email: str, full_name: str) -> bool:
     return send_email(to_email, subject, html, plain)
 
 
+def send_org_request_received(to_email: str, full_name: str, org_name: str) -> bool:
+    """Acknowledge an organizer-team registration request."""
+    name = full_name or "بك"
+    subject = "تم استلام طلب التسجيل - Qr Platform"
+    html = _build_email(
+        template="org_request_received",
+        icon_svg=_ICON_USERS,
+        icon_bg="#eff6ff",
+        icon_color="#3b82f6",
+        preheader="استلمنا طلب تسجيل فريق التنظيم الخاص بك وهو قيد المراجعة",
+        heading=f"شكراً {name}!",
+        paragraphs=[
+            f"استلمنا طلب تسجيل <strong>{org_name}</strong> كفريق تنظيم على <strong>Qr Platform</strong>.",
+            "سيقوم فريق المنصة بمراجعة طلبك، وستصلك رسالة عند الموافقة لتتمكن من تسجيل الدخول.",
+        ],
+        button_text="زيارة المنصة",
+        button_url=settings.app_url,
+        button_bg="#3b82f6",
+        warning_text="لا حاجة لأي إجراء الآن. سنخبرك فور اكتمال المراجعة.",
+        plain_link=settings.app_url,
+    )
+    plain = f"شكراً {name}!\n\nاستلمنا طلب تسجيل {org_name} كفريق تنظيم. طلبك قيد المراجعة وسنخبرك عند الموافقة."
+    return send_email(to_email, subject, html, plain)
+
+
+def send_org_request_approved(to_email: str, full_name: str, org_name: str) -> bool:
+    """Notify an applicant that their organizer-team request was approved."""
+    name = full_name or "بك"
+    subject = "تمت الموافقة على طلبك - Qr Platform"
+    login_url = f"{settings.app_url}/auth/login"
+    html = _build_email(
+        template="org_request_approved",
+        icon_svg=_ICON_ROCKET,
+        icon_bg="#f0fdf4",
+        icon_color="#22c55e",
+        preheader=f"تمت الموافقة على {org_name}! يمكنك تسجيل الدخول الآن",
+        heading=f"مبارك {name}!",
+        paragraphs=[
+            f"تمت الموافقة على تسجيل <strong>{org_name}</strong> كفريق تنظيم على <strong>Qr Platform</strong>.",
+            "تم تجهيز مساحة العمل الخاصة بك. يمكنك الآن تسجيل الدخول بنفس البريد وكلمة المرور اللذين استخدمتهما في الطلب.",
+        ],
+        button_text="تسجيل الدخول",
+        button_url=login_url,
+        button_bg="#22c55e",
+        plain_link=login_url,
+    )
+    plain = f"مبارك {name}!\n\nتمت الموافقة على {org_name}. سجّل الدخول الآن: {login_url}"
+    return send_email(to_email, subject, html, plain)
+
+
+def send_org_request_rejected(to_email: str, full_name: str, org_name: str, reason: str = "") -> bool:
+    """Notify an applicant that their organizer-team request was rejected."""
+    name = full_name or "بك"
+    subject = "بخصوص طلب التسجيل - Qr Platform"
+    paragraphs = [
+        f"نشكرك على اهتمامك بالتسجيل بـ <strong>{org_name}</strong> على <strong>Qr Platform</strong>.",
+        "بعد المراجعة، لم نتمكن من الموافقة على الطلب في الوقت الحالي.",
+    ]
+    if reason:
+        paragraphs.append(f"السبب: {reason}")
+    html = _build_email(
+        template="org_request_rejected",
+        icon_svg=_ICON_SHIELD,
+        icon_bg="#fef2f2",
+        icon_color="#ef4444",
+        preheader="تحديث بخصوص طلب تسجيل فريق التنظيم",
+        heading=f"عزيزي {name}",
+        paragraphs=paragraphs,
+        button_text="التواصل مع الدعم",
+        button_url=settings.app_url,
+        button_bg="#6366f1",
+        warning_text="يمكنك التواصل معنا لمزيد من التفاصيل أو إعادة التقديم لاحقاً.",
+        plain_link=settings.app_url,
+    )
+    plain = f"عزيزي {name}،\n\nلم نتمكن من الموافقة على طلب {org_name} حالياً."
+    if reason:
+        plain += f"\nالسبب: {reason}"
+    return send_email(to_email, subject, html, plain)
+
+
 def send_password_changed_email(to_email: str) -> bool:
     """Send confirmation that password was changed."""
     subject = "تم تغيير كلمة المرور - Qr Platform"

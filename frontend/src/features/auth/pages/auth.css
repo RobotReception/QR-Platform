@@ -666,3 +666,102 @@
     font-size: 10px;
   }
 }
+
+/* ── Signup mode toggle ── */
+.auth-modes {
+  display: flex;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 5px;
+  margin-bottom: 22px;
+}
+.auth-mode {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: #9ca3af;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.auth-mode:hover { color: #e5e7eb; }
+.auth-mode--active {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.35);
+}
+
+/* ── Info note (organizer mode) ── */
+.auth-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  color: #93c5fd;
+  border-radius: 10px;
+  padding: 11px 14px;
+  font-size: 13px;
+  line-height: 1.6;
+  margin-bottom: 18px;
+}
+.auth-note svg { flex-shrink: 0; margin-top: 2px; }
+
+/* ── Section label ── */
+.auth-section-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #c9a96e;
+  letter-spacing: 0.02em;
+  margin: 8px 0 2px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* ── Pending review screen ── */
+.auth-pending {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 16px 8px 8px;
+}
+.auth-pending__icon {
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgba(245, 158, 11, 0.12);
+  color: #f59e0b;
+  margin-bottom: 18px;
+}
+.auth-pending__title {
+  font-size: 20px;
+  font-weight: 700;
+  color: #f3f4f6;
+  margin: 0 0 10px;
+}
+.auth-pending__text {
+  font-size: 14px;
+  line-height: 1.8;
+  color: #9ca3af;
+  margin: 0 0 22px;
+  max-width: 420px;
+}
+.auth-btn--inline {
+  display: inline-flex;
+  width: auto;
+  padding-left: 28px;
+  padding-right: 28px;
+  text-decoration: none;
+}
