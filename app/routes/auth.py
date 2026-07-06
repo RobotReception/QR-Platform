@@ -14,6 +14,7 @@ from app.services.email_service import (
     send_welcome_email,
     send_email_verification,
     send_otp_email,
+    send_org_request_received,
 )
 from app.services.audit_service import log_audit
 from app.services.permission_service import get_user_tenants_with_roles, get_user_permissions
@@ -40,6 +41,35 @@ class SignupRequest(BaseModel):
     password: str
     full_name: Optional[str] = None
     organization_name: Optional[str] = None  # Auto-generated if not provided
+
+
+class OrgRequestCreate(BaseModel):
+    # Applicant
+    full_name: str
+    email: EmailStr
+    password: str
+    phone: Optional[str] = None
+    # Organization
+    org_name: str
+    org_type: Optional[str] = None
+    description: Optional[str] = None
+    city: Optional[str] = None
+    country: Optional[str] = None
+    website: Optional[str] = None
+    contact_handle: Optional[str] = None
+    # Expected activity size
+    expected_events_per_month: Optional[int] = None
+    expected_attendees: Optional[int] = None
+    requested_plan_code: Optional[str] = None
+    # Proof / documents
+    proof_url: Optional[str] = None
+    documents_url: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class OrgRequestPublicResponse(BaseModel):
+    message: str
+    request_id: Optional[str] = None
 
 
 class LoginRequest(BaseModel):
@@ -237,6 +267,90 @@ async def signup(
         message="تم التسجيل بنجاح. يرجى تأكيد بريدك الإلكتروني.",
         user_id=user_id,
         tenants=tenant_info,
+    )
+
+
+# ══════════════════════════════════════════════
+# ORGANIZER-TEAM REGISTRATION REQUEST (public, awaits platform approval)
+# ══════════════════════════════════════════════
+
+def _validate_password_strength(password: str) -> None:
+    """Same rules the frontend enforces: 8+ chars, an uppercase letter, a digit."""
+    if len(password) < 8 or not re.search(r"[A-Z]", password) or not re.search(r"[0-9]", password):
+        raise HTTPException(
+            status_code=400,
+            detail="كلمة المرور يجب أن تكون 8 أحرف على الأقل وتحتوي على حرف كبير ورقم",
+        )
+
+
+@router.post("/org-request", response_model=OrgRequestPublicResponse, status_code=status.HTTP_201_CREATED)
+async def create_org_request(
+    body: OrgRequestCreate,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Public endpoint: a visitor requests to register as an organizer team.
+    No Supabase user or tenant is created — the request awaits platform approval.
+    The chosen password is stored encrypted and used once at approval time.
+    """
+    from app.services.secret_box import encrypt_secret
+
+    email = body.email.lower().strip()
+    _validate_password_strength(body.password)
+
+    # ── Reject if the email already has an account ──
+    existing_user = await db.execute(
+        text("SELECT 1 FROM auth.users WHERE lower(email) = :email"),
+        {"email": email},
+    )
+    if existing_user.first():
+        raise HTTPException(status_code=409, detail="البريد الإلكتروني مسجل مسبقاً")
+
+    # ── Reject if there's already a pending request for this email ──
+    pending = await db.execute(
+        text("SELECT 1 FROM organization_requests WHERE lower(email) = :email AND status = 'pending'"),
+        {"email": email},
+    )
+    if pending.first():
+        raise HTTPException(status_code=409, detail="يوجد طلب قيد المراجعة بهذا البريد بالفعل")
+
+    password_encrypted = encrypt_secret(body.password)
+
+    result = await db.execute(
+        text("""
+            INSERT INTO organization_requests (
+                full_name, email, phone, password_encrypted,
+                org_name, org_type, description, city, country, website, contact_handle,
+                expected_events_per_month, expected_attendees, requested_plan_code,
+                proof_url, documents_url, notes
+            ) VALUES (
+                :full_name, :email, :phone, :pwd,
+                :org_name, :org_type, :description, :city, :country, :website, :contact_handle,
+                :eepm, :attendees, :plan,
+                :proof_url, :documents_url, :notes
+            )
+            RETURNING id
+        """),
+        {
+            "full_name": body.full_name, "email": email, "phone": body.phone,
+            "pwd": password_encrypted,
+            "org_name": body.org_name, "org_type": body.org_type,
+            "description": body.description, "city": body.city, "country": body.country,
+            "website": body.website, "contact_handle": body.contact_handle,
+            "eepm": body.expected_events_per_month, "attendees": body.expected_attendees,
+            "plan": body.requested_plan_code,
+            "proof_url": body.proof_url, "documents_url": body.documents_url, "notes": body.notes,
+        },
+    )
+    request_id = str(result.scalar())
+    await db.commit()
+
+    background_tasks.add_task(send_org_request_received, email, body.full_name, body.org_name)
+
+    return OrgRequestPublicResponse(
+        message="تم استلام طلبك بنجاح. سيتم مراجعته من قبل فريق المنصة وسنخبرك عند الموافقة.",
+        request_id=request_id,
     )
 
 

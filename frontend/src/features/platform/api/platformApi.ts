@@ -166,6 +166,31 @@ export interface AddonItem {
   sort_order: number
 }
 
+export interface OrgRequest {
+  id: string
+  status: string
+  full_name: string
+  email: string
+  phone?: string | null
+  org_name: string
+  org_type?: string | null
+  description?: string | null
+  city?: string | null
+  country?: string | null
+  website?: string | null
+  contact_handle?: string | null
+  expected_events_per_month?: number | null
+  expected_attendees?: number | null
+  requested_plan_code?: string | null
+  proof_url?: string | null
+  documents_url?: string | null
+  notes?: string | null
+  review_note?: string | null
+  reviewed_at?: string | null
+  created_tenant_id?: string | null
+  created_at: string
+}
+
 export const platformAPI = {
   analytics: async (): Promise<PlatformAnalytics> => {
     const { data } = await http.get<PlatformAnalytics>('/platform/analytics')
@@ -257,5 +282,19 @@ export const platformAPI = {
   },
   deleteTenantRole: async (tenantId: string, roleId: string) => {
     await http.delete(`/platform/tenants/${tenantId}/roles/${roleId}`)
+  },
+
+  // Organizer-team registration requests
+  listOrgRequests: async (status: string = 'pending') => {
+    const { data } = await http.get<OrgRequest[]>('/platform/org-requests', { params: { status } })
+    return data
+  },
+  approveOrgRequest: async (id: string, note?: string) => {
+    const { data } = await http.post<OrgRequest>(`/platform/org-requests/${id}/approve`, { note })
+    return data
+  },
+  rejectOrgRequest: async (id: string, note?: string) => {
+    const { data } = await http.post<OrgRequest>(`/platform/org-requests/${id}/reject`, { note })
+    return data
   },
 }

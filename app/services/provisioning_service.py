@@ -83,7 +83,7 @@ async def provision_tenant_manual(
                 'invitations.create', 'invitations.view', 'invitations.send',
                 'guests.view', 'guests.create', 'guests.edit', 'guests.import',
                 'checkin.scan', 'checkin.view',
-                'teams.view', 'gates.view',
+                'teams.view', 'teams.request', 'gates.view',
                 'batches.create', 'batches.view'
             )
             ON CONFLICT DO NOTHING

@@ -25,6 +25,7 @@ TENANT_EXEMPT_PATHS = {
     "/openapi.json",
     "/api/v1/auth/signup",
     "/api/v1/auth/login",
+    "/api/v1/auth/org-request",
     "/api/v1/auth/password-reset/send-otp",
     "/api/v1/auth/password-reset/verify-otp",
     "/api/v1/auth/password-reset/confirm-new",
@@ -170,6 +171,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     PUBLIC_PREFIXES = (
         "/api/v1/invitations/view/",   # public: view by token (no auth)
         "/api/v1/invitations/rsvp/",   # public: RSVP by token (no auth)
+        "/api/v1/auth/org-request",    # public: organizer-team registration request
     )
 
     # Check-in: authenticated (JWT + checkin.scan), high-throughput at gates
